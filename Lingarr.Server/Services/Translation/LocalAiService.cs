@@ -329,13 +329,35 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
-        var chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
-        if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
+        _logger.LogDebug("Structured output raw response: {Response}", responseBody);
+
+        // Try standard ChatResponse first, then direct JSON parsing if model returned raw translations
+        ChatResponse? chatResponse = null;
+        try
         {
-            throw new TranslationException("No completion choices returned from LocalAI");
+            chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogWarning(ex, "Structured output response is not a ChatResponse, attempting direct JSON parse");
         }
 
-        var translatedJson = chatResponse.Choices[0].Message.Content;
+        string translatedJson;
+        if (chatResponse?.Choices is { Count: > 0 })
+        {
+            translatedJson = chatResponse.Choices[0].Message.Content;
+        }
+        else
+        {
+            // Model returned raw JSON (e.g. {"translations": [...]}) — try parsing directly
+            translatedJson = responseBody;
+        }
+
+        // Strip markdown fences if present
+        translatedJson = translatedJson
+            .Trim()
+            .Replace("```json", "")
+            .Replace("```", "");
 
         try
         {
