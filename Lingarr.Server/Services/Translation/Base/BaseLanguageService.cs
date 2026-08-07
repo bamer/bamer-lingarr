@@ -101,7 +101,9 @@ public abstract class BaseLanguageService : BaseTranslationService
             return await base.GetLanguagePair(requestedSource, requestedTarget, cancellationToken);
         }
 
-        if (!_languageCodeService.Validate(requestedSource) || !_languageCodeService.Validate(requestedTarget))
+        // AI services can auto-detect source language — skip source validation if empty
+        var sourceValid = string.IsNullOrWhiteSpace(requestedSource) || _languageCodeService.Validate(requestedSource);
+        if (!sourceValid || !_languageCodeService.Validate(requestedTarget))
         {
             return null;
         }
