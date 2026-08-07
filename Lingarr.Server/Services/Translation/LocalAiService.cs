@@ -308,7 +308,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
         bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
         {
-            ["response_format"] = responseFormat
+            ["response_format"] = responseFormat,
+            ["stream"] = false
         });
 
         var requestContent = new StringContent(
@@ -394,6 +395,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         replacements["systemPrompt"] +=
             "\n\nYou MUST respond with ONLY a JSON array. No prose, no explanation, no markdown. Example: [{\"position\": 1, \"line\": \"translated text\"}]";
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
+        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
+        {
+            ["stream"] = false
+        });
 
         var requestContent = new StringContent(
             bodyJson,
@@ -583,9 +588,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        
+        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
+        {
+            ["stream"] = false
+        });
 
-               var content = new StringContent(bodyJson,
+        var content = new StringContent(bodyJson,
             Encoding.UTF8, "application/json");
 
         var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
