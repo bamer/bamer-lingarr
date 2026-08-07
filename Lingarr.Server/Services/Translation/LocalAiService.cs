@@ -368,6 +368,9 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         CancellationToken cancellationToken)
     {
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
+        // ponytail: enforce JSON output — structured output failed, model must return array
+        replacements["systemPrompt"] +=
+            "\n\nYou MUST respond with ONLY a JSON array. No prose, no explanation, no markdown. Example: [{\"position\": 1, \"line\": \"translated text\"}]";
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
 
         var requestContent = new StringContent(
@@ -395,13 +398,29 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             throw new TranslationException("No completion choices returned from LocalAI");
         }
 
-        // Try to extract JSON
-        var translatedJson = chatResponse.Choices[0].Message.Content;
+        // Try to extract JSON — strip markdown fences, then locate array
+        var translatedJson = chatResponse.Choices[0].Message.Content
+            .Trim()
+            .Replace("```json", "")
+            .Replace("```", "");
+
+        _logger.LogDebug("Raw model JSON-parsing response: {Response}", translatedJson);
+
         var jsonStart = translatedJson.IndexOf('[');
         var jsonEnd = translatedJson.LastIndexOf(']');
         if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart)
         {
             translatedJson = translatedJson.Substring(jsonStart, jsonEnd - jsonStart + 1);
+        }
+
+        translatedJson = translatedJson.Trim();
+        if (string.IsNullOrEmpty(translatedJson) || translatedJson[0] != '[')
+        {
+            _logger.LogError(
+                "Model did not return a JSON array. First 200 chars: {Preview}",
+                translatedJson[..Math.Min(200, translatedJson.Length)]);
+            throw new TranslationException(
+                $"Model did not return a JSON array. Starts with: '{translatedJson[..Math.Min(80, translatedJson.Length)]}'");
         }
 
         try
@@ -461,7 +480,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             throw new TranslationException("Invalid or empty response from generate API.");
         }
 
-        var translatedJson = generateResponse.Response;
+        var translatedJson = generateResponse.Response
+            .Trim()
+            .Replace("```json", "")
+            .Replace("```", "");
+
+        _logger.LogDebug("Raw generate API response: {Response}", translatedJson);
 
         // Try to extract JSON from the response
         var jsonStart = translatedJson.IndexOf('[');
@@ -470,6 +494,16 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart)
         {
             translatedJson = translatedJson.Substring(jsonStart, jsonEnd - jsonStart + 1);
+        }
+
+        translatedJson = translatedJson.Trim();
+        if (string.IsNullOrEmpty(translatedJson) || translatedJson[0] != '[')
+        {
+            _logger.LogError(
+                "Generate API did not return a JSON array. First 200 chars: {Preview}",
+                translatedJson[..Math.Min(200, translatedJson.Length)]);
+            throw new TranslationException(
+                $"Generate API did not return a JSON array. Starts with: '{translatedJson[..Math.Min(80, translatedJson.Length)]}'");
         }
 
         try
