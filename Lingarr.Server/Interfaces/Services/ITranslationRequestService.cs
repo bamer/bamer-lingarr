@@ -123,6 +123,13 @@ public interface ITranslationRequestService
     Task<int> RetryAllFailedRequests();
 
     /// <summary>
+    /// Resumes all failed, cancelled, or interrupted translation requests.
+    /// Reuses already-translated lines.
+    /// </summary>
+    /// <returns>The number of requests resumed</returns>
+    Task<int> ResumeAllFailedRequests();
+
+    /// <summary>
     /// Clears the MediaHash property for the associated media entity (Movie or Episode) 
     /// when a translation job fails or is cancelled.
     /// </summary>

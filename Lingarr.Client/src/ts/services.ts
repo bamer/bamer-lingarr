@@ -122,6 +122,7 @@ export interface ITranslationRequestService {
     remove<T>(translationRequest: ITranslationRequest): Promise<T>
     retry<T>(translationRequest: ITranslationRequest): Promise<T>
     retryAllFailed<T>(): Promise<T>
+    resumeAllFailed<T>(): Promise<T>
     resume<T>(translationRequest: ITranslationRequest): Promise<T>
 }
 

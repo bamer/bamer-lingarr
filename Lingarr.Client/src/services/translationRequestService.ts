@@ -94,6 +94,17 @@ const service = (
                 })
         })
     },
+    resumeAllFailed<T>(): Promise<T> {
+        return new Promise((resolve, reject) => {
+            http.post(`${resource}/resume-all-failed`)
+                .then((response: AxiosResponse<T>) => {
+                    resolve(response.data)
+                })
+                .catch((error: AxiosError) => {
+                    reject(error.response)
+                })
+        })
+    },
     resume<T>(translationRequest: ITranslationRequest): Promise<T> {
         return new Promise((resolve, reject) => {
             http.post(`${resource}/resume`, translationRequest)

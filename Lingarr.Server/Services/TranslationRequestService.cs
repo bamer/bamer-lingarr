@@ -407,6 +407,35 @@ public class TranslationRequestService : ITranslationRequestService
     }
 
     /// <inheritdoc />
+    public async Task<int> ResumeAllFailedRequests()
+    {
+        var resumableStatuses = new[]
+        {
+            TranslationStatus.Failed,
+            TranslationStatus.Cancelled,
+            TranslationStatus.Interrupted
+        };
+        var requests = await _dbContext.TranslationRequests
+            .Where(tr => resumableStatuses.Contains(tr.Status))
+            .ToListAsync();
+
+        var count = 0;
+        foreach (var request in requests)
+        {
+            request.Status = TranslationStatus.Pending;
+            request.ErrorMessage = null;
+            request.StackTrace = null;
+            request.CompletedAt = null;
+            await _eventService.LogEvent(request.Id, TranslationStatus.Pending, "Resumed");
+            var jobId = _backgroundJobClient.Enqueue<TranslationJob>(job =>
+                job.Execute(request, CancellationToken.None));
+            await UpdateTranslationRequest(request, TranslationStatus.Pending, jobId);
+            count++;
+        }
+        return count;
+    }
+
+    /// <inheritdoc />
     public async Task<string?> ResumeTranslationRequest(TranslationRequest resumeRequest)
     {
         var translationRequest = await _dbContext.TranslationRequests.FirstOrDefaultAsync(

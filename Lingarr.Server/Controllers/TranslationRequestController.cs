@@ -157,6 +157,19 @@ public class TranslationRequestController : ControllerBase
     }
 
     /// <summary>
+    /// Resumes all failed, cancelled, or interrupted translation requests.
+    /// Reuses already-translated lines.
+    /// </summary>
+    /// <response code="200">Returns the number of requests resumed</response>
+    /// <returns>Number of requests resumed</returns>
+    [HttpPost("resume-all-failed")]
+    public async Task<ActionResult<int>> ResumeAllFailedRequests()
+    {
+        var count = await _translationRequestService.ResumeAllFailedRequests();
+        return Ok(count);
+    }
+
+    /// <summary>
     /// Resumes a Failed, Cancelled or Interrupted translation request, reusing
     /// any lines already translated by a previous attempt.
     /// </summary>

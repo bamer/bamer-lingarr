@@ -6,8 +6,7 @@ import {
     IRequestProgress,
     ITranslationRequest,
     IUseTranslationRequestStore,
-    TRANSLATION_STATUS,
-    TranslationStatus
+    TRANSLATION_STATUS
 } from '@/ts'
 import services from '@/services'
 
@@ -80,22 +79,9 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
             await this.fetch()
         },
         async updateProgress(requestProgress: IRequestProgress) {
-            const completionStatuses: TranslationStatus[] = [
-                TRANSLATION_STATUS.CANCELLED,
-                TRANSLATION_STATUS.FAILED,
-                TRANSLATION_STATUS.COMPLETED,
-                TRANSLATION_STATUS.INTERRUPTED
-            ]
-
             this.translationRequests.items = this.translationRequests.items.map(
                 (request: ITranslationRequest) => {
                     if (request.id === requestProgress.id) {
-                        if (
-                            completionStatuses.includes(request.status) &&
-                            !completionStatuses.includes(requestProgress.status)
-                        ) {
-                            return request
-                        }
                         return {
                             ...request,
                             status: requestProgress.status,
@@ -142,6 +128,10 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
         },
         async retryFailed() {
             await services.translationRequest.retryAllFailed<number>()
+            await this.fetch()
+        },
+        async resumeAllFailed() {
+            await services.translationRequest.resumeAllFailed<number>()
             await this.fetch()
         }
     }

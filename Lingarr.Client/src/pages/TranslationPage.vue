@@ -11,7 +11,12 @@
                 </button>
                 <button
                     class="hover:text-primary-content/50 cursor-pointer rounded-md border border-accent px-2 py-1 text-primary-content transition-colors"
-                    @click="translationRequestStore.retryFailed()">
+                    @click="translationRequestStore.resumeAllFailed()">
+                    Resume All Failed
+                </button>
+                <button
+                    class="hover:text-primary-content/50 cursor-pointer rounded-md border border-accent px-2 py-1 text-primary-content transition-colors"
+                    @click="confirmRetryFailed">
                     Retry Failed
                 </button>
             </div>
@@ -230,6 +235,12 @@ async function handleAction(translationRequest: ITranslationRequest, action: TRA
             return await translationRequestStore.resume(translationRequest)
         default:
             console.error('unknown translation request action: ' + action)
+    }
+}
+
+function confirmRetryFailed() {
+    if (window.confirm('Retry will discard already-translated lines and start from scratch. Continue?')) {
+        translationRequestStore.retryFailed()
     }
 }
 
