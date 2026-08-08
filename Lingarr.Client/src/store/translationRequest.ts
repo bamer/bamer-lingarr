@@ -130,6 +130,24 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
                 this.selectedRequests.splice(index, 1)
             }
             this.selectAll = this.selectedRequests.length === this.translationRequests.items.length
+        },
+        async removeCompleted() {
+            const completed = this.translationRequests.items.filter(
+                (r) => r.status === TRANSLATION_STATUS.COMPLETED
+            )
+            for (const request of completed) {
+                await services.translationRequest.remove<string>(request)
+            }
+            await this.fetch()
+        },
+        async retryFailed() {
+            const failed = this.translationRequests.items.filter(
+                (r) => r.status === TRANSLATION_STATUS.FAILED
+            )
+            for (const request of failed) {
+                await services.translationRequest.retry<string>(request)
+            }
+            await this.fetch()
         }
     }
 })

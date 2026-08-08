@@ -2,7 +2,19 @@
     <div class="w-full">
         <!-- Search and Filters -->
         <div class="flex flex-wrap items-center justify-between gap-2 bg-tertiary p-4">
-            <SearchComponent v-model="filter" />
+            <div class="flex flex-wrap items-center gap-2">
+                <SearchComponent v-model="filter" />
+                <button
+                    class="hover:text-primary-content/50 cursor-pointer rounded-md border border-accent px-2 py-1 text-primary-content transition-colors"
+                    @click="translationRequestStore.removeCompleted()">
+                    Remove Completed
+                </button>
+                <button
+                    class="hover:text-primary-content/50 cursor-pointer rounded-md border border-accent px-2 py-1 text-primary-content transition-colors"
+                    @click="translationRequestStore.retryFailed()">
+                    Retry Failed
+                </button>
+            </div>
             <div
                 class="flex w-full flex-col gap-2 md:w-fit md:flex-row md:justify-between md:space-x-2">
                 <button
@@ -40,14 +52,26 @@
 
         <div class="w-full px-4">
             <div class="hidden border-b border-accent font-bold md:grid md:grid-cols-12">
-                <div class="col-span-4 px-4 py-2">Title</div>
+                <div
+                    class="col-span-4 cursor-pointer px-4 py-2 select-none hover:text-primary-content/70"
+                    @click="toggleSort('Title')">
+                    Title {{ sortIndicator('Title') }}
+                </div>
                 <div class="col-span-1 px-4 py-2">Source</div>
                 <div class="col-span-1 px-4 py-2">Target</div>
-                <div class="col-span-1 px-4 py-2">Status</div>
+                <div
+                    class="col-span-1 cursor-pointer px-4 py-2 select-none hover:text-primary-content/70"
+                    @click="toggleSort('Status')">
+                    Status {{ sortIndicator('Status') }}
+                </div>
                 <div class="px-4 py-2" :class="isSelectMode ? 'col-span-2' : 'col-span-3'">
                     Progress
                 </div>
-                <div class="col-span-1 px-4 py-2">Completed</div>
+                <div
+                    class="col-span-1 cursor-pointer px-4 py-2 select-none hover:text-primary-content/70"
+                    @click="toggleSort('CompletedAt')">
+                    Completed {{ sortIndicator('CompletedAt') }}
+                </div>
                 <div class="col-span-1"></div>
                 <div
                     v-if="isSelectMode"
@@ -239,5 +263,27 @@ const handleDelete = async () => {
     }
     translationRequestStore.clearSelection()
     translationRequestStore.fetch()
+}
+
+const sortableColumns: Record<string, string> = {
+    Title: 'Title',
+    Status: 'Status',
+    CompletedAt: 'CompletedAt'
+}
+
+const toggleSort = async (column: string) => {
+    const sortBy = sortableColumns[column]
+    if (!sortBy) return
+    const current = filter.value
+    const newFilter: IFilter = current.sortBy === sortBy
+        ? { ...current, isAscending: !current.isAscending }
+        : { ...current, sortBy, isAscending: true }
+    await translationRequestStore.setFilter(newFilter)
+}
+
+const sortIndicator = (column: string): string => {
+    const sortBy = sortableColumns[column]
+    if (filter.value.sortBy !== sortBy) return ''
+    return filter.value.isAscending ? '↑' : '↓'
 }
 </script>
