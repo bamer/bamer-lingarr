@@ -19,7 +19,7 @@
             v-else
             :id="field.key"
             v-model="fieldValue"
-            :type="field.type === PLUGIN_SETTING_TYPE.SECRET ? INPUT_TYPE.PASSWORD : INPUT_TYPE.TEXT"
+            :type="field.type === PLUGIN_SETTING_TYPE.SECRET ? INPUT_TYPE.PASSWORD : field.type === PLUGIN_SETTING_TYPE.NUMBER ? INPUT_TYPE.NUMBER : INPUT_TYPE.TEXT"
             :label="field.label"
             :placeholder="field.default ?? ''"
             :validation-type="validationType"
@@ -69,6 +69,9 @@ const remoteSelect = ref<SelectComponentExpose | null>(null)
 const validationType = computed<InputValidationType | undefined>(() => {
     if (props.field.type === PLUGIN_SETTING_TYPE.URL) {
         return INPUT_VALIDATION_TYPE.URL
+    }
+    if (props.field.type === PLUGIN_SETTING_TYPE.NUMBER) {
+        return INPUT_VALIDATION_TYPE.NUMBER
     }
     if (props.field.minLength != null) {
         return INPUT_VALIDATION_TYPE.STRING

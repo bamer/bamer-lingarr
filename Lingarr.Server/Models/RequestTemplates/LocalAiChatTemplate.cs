@@ -20,4 +20,7 @@ public class LocalAiChatTemplate
             Content = "{userMessage}" 
         }
     ];
+
+    [JsonPropertyName("stream")] 
+    public bool Stream { get; set; } = false;
 }

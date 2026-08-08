@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -24,6 +25,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     private bool _isChatEndpoint;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
+    private Dictionary<string, object?> _modelOptions = new();
 
     /// <inheritdoc />
     public override string? ModelName => _model;
@@ -73,7 +75,13 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 SettingKeys.Translation.MaxRetries,
                 SettingKeys.Translation.RetryDelay,
                 SettingKeys.Translation.RetryDelayMultiplier,
-                SettingKeys.Translation.LanguageCodeFormat
+                SettingKeys.Translation.LanguageCodeFormat,
+                SettingKeys.Translation.ModelTemperature,
+                SettingKeys.Translation.ModelTopP,
+                SettingKeys.Translation.ModelMaxTokens,
+                SettingKeys.Translation.ModelReasoningBudget,
+                SettingKeys.Translation.ModelChatTemplateKwargs,
+                SettingKeys.Translation.ModelReasoningEffort
             ]);
             _model = settings[SettingKeys.Translation.LocalAi.Model];
             _endpoint = settings[SettingKeys.Translation.LocalAi.Endpoint];
@@ -92,7 +100,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             SetLanguageReplacements(sourceLanguage, targetLanguage, settings[SettingKeys.Translation.LanguageCodeFormat]);
             _prompt = settings[SettingKeys.Translation.AiPrompt];
             _userPrompt = settings[SettingKeys.Translation.AiUserPrompt];
-            _isChatEndpoint = _endpoint.TrimEnd('/').EndsWith("completions", StringComparison.OrdinalIgnoreCase);
+
+            // Normalize endpoint URLs — append path if only base URL is provided
+            _endpoint = NormalizeEndpoint(_endpoint);
+            _isChatEndpoint = _endpoint.Contains("completions", StringComparison.OrdinalIgnoreCase);
 
             var requestTimeout = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
                 out var timeOut)
@@ -118,6 +129,21 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _retryDelayMultiplier = int.TryParse(settings[SettingKeys.Translation.RetryDelayMultiplier], out var multiplier) 
                 ? multiplier 
                 : 2;
+
+            // Build model options — only include non-empty values
+            _modelOptions = new Dictionary<string, object?>();
+            if (double.TryParse(settings[SettingKeys.Translation.ModelTemperature], NumberStyles.Float, CultureInfo.InvariantCulture, out var temperature))
+                _modelOptions["temperature"] = temperature;
+            if (double.TryParse(settings[SettingKeys.Translation.ModelTopP], NumberStyles.Float, CultureInfo.InvariantCulture, out var topP))
+                _modelOptions["top_p"] = topP;
+            if (int.TryParse(settings[SettingKeys.Translation.ModelMaxTokens], out var maxTokens))
+                _modelOptions["max_tokens"] = maxTokens;
+            if (int.TryParse(settings[SettingKeys.Translation.ModelReasoningBudget], out var reasoningBudget))
+                _modelOptions["reasoning_budget"] = reasoningBudget;
+            if (!string.IsNullOrWhiteSpace(settings[SettingKeys.Translation.ModelChatTemplateKwargs]))
+                _modelOptions["chat_template_kwargs"] = settings[SettingKeys.Translation.ModelChatTemplateKwargs];
+            if (!string.IsNullOrWhiteSpace(settings[SettingKeys.Translation.ModelReasoningEffort]))
+                _modelOptions["reasoning_effort"] = settings[SettingKeys.Translation.ModelReasoningEffort];
 
             _initialized = true;
         }
@@ -306,11 +332,14 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
         var replacements = GetBatchReplacements(_model!, JsonSerializer.Serialize(subtitleBatch));
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
+        var fields = new Dictionary<string, object?>
         {
             ["response_format"] = responseFormat,
             ["stream"] = false
-        });
+        };
+        foreach (var opt in _modelOptions)
+            fields[opt.Key] = opt.Value;
+        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, fields);
 
         var requestContent = new StringContent(
             bodyJson,
@@ -395,10 +424,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         replacements["systemPrompt"] +=
             "\n\nYou MUST respond with ONLY a JSON array. No prose, no explanation, no markdown. Example: [{\"position\": 1, \"line\": \"translated text\"}]";
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
-        {
-            ["stream"] = false
-        });
+        var fields = new Dictionary<string, object?> { ["stream"] = false };
+        foreach (var opt in _modelOptions)
+            fields[opt.Key] = opt.Value;
+        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, fields);
 
         var requestContent = new StringContent(
             bodyJson,
@@ -588,10 +617,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         CancellationToken cancellationToken)
     {
         var bodyJson = _requestTemplateService.BuildRequestBody(_chatRequestTemplate!, replacements);
-        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, new Dictionary<string, object?>
-        {
-            ["stream"] = false
-        });
+        var fields = new Dictionary<string, object?> { ["stream"] = false };
+        foreach (var opt in _modelOptions)
+            fields[opt.Key] = opt.Value;
+        bodyJson = _requestTemplateService.SetRequestFields(bodyJson, fields);
 
         var content = new StringContent(bodyJson,
             Encoding.UTF8, "application/json");
@@ -619,5 +648,23 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         }
 
         return chatResponse.Choices[0].Message.Content;
+    }
+
+    /// <summary>
+    /// Normalizes the endpoint URL: appends /chat/completions if only a base URL is provided.
+    /// </summary>
+    private static string NormalizeEndpoint(string endpoint)
+    {
+        var trimmed = endpoint.TrimEnd('/');
+
+        // Already has a specific path
+        if (trimmed.EndsWith("completions", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.EndsWith("generate", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+
+        // Base URL like http://localhost:8080/v1 or http://localhost:8080
+        return $"{trimmed}/chat/completions";
     }
 }

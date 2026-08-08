@@ -90,6 +90,14 @@ public static class SettingKeys
         public const string RetryDelayMultiplier = "retry_delay_multiplier";
         public const string NavigateToDetailsOnRequest = "navigate_to_details_on_request";
         public const string LanguageCodeFormat = "language_code_format";
+
+        // Model options — shared across AI services
+        public const string ModelTemperature = "model_temperature";
+        public const string ModelTopP = "model_top_p";
+        public const string ModelMaxTokens = "model_max_tokens";
+        public const string ModelReasoningBudget = "model_reasoning_budget";
+        public const string ModelChatTemplateKwargs = "model_chat_template_kwargs";
+        public const string ModelReasoningEffort = "model_reasoning_effort";
     }
 
     public static class Automation
