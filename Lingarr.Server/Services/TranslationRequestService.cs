@@ -391,6 +391,22 @@ public class TranslationRequestService : ITranslationRequestService
     }
 
     /// <inheritdoc />
+    public async Task<int> RetryAllFailedRequests()
+    {
+        var failedRequests = await _dbContext.TranslationRequests
+            .Where(tr => tr.Status == TranslationStatus.Failed)
+            .ToListAsync();
+
+        var count = 0;
+        foreach (var request in failedRequests)
+        {
+            await EnqueueRequest(request);
+            count++;
+        }
+        return count;
+    }
+
+    /// <inheritdoc />
     public async Task<string?> ResumeTranslationRequest(TranslationRequest resumeRequest)
     {
         var translationRequest = await _dbContext.TranslationRequests.FirstOrDefaultAsync(

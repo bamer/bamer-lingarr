@@ -117,6 +117,12 @@ public interface ITranslationRequestService
     );
 
     /// <summary>
+    /// Retries all failed translation requests.
+    /// </summary>
+    /// <returns>The number of requests retried</returns>
+    Task<int> RetryAllFailedRequests();
+
+    /// <summary>
     /// Clears the MediaHash property for the associated media entity (Movie or Episode) 
     /// when a translation job fails or is cancelled.
     /// </summary>

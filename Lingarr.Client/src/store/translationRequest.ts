@@ -141,12 +141,7 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
             await this.fetch()
         },
         async retryFailed() {
-            const failed = this.translationRequests.items.filter(
-                (r) => r.status === TRANSLATION_STATUS.FAILED
-            )
-            for (const request of failed) {
-                await services.translationRequest.retry<string>(request)
-            }
+            await services.translationRequest.retryAllFailed<number>()
             await this.fetch()
         }
     }
