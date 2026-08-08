@@ -132,18 +132,24 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
             // Build model options — only include non-empty values
             _modelOptions = new Dictionary<string, object?>();
-            if (double.TryParse(settings[SettingKeys.Translation.ModelTemperature], NumberStyles.Float, CultureInfo.InvariantCulture, out var temperature))
+            if (settings.TryGetValue(SettingKeys.Translation.ModelTemperature, out var tempStr) &&
+                double.TryParse(tempStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var temperature))
                 _modelOptions["temperature"] = temperature;
-            if (double.TryParse(settings[SettingKeys.Translation.ModelTopP], NumberStyles.Float, CultureInfo.InvariantCulture, out var topP))
+            if (settings.TryGetValue(SettingKeys.Translation.ModelTopP, out var topPStr) &&
+                double.TryParse(topPStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var topP))
                 _modelOptions["top_p"] = topP;
-            if (int.TryParse(settings[SettingKeys.Translation.ModelMaxTokens], out var maxTokens))
+            if (settings.TryGetValue(SettingKeys.Translation.ModelMaxTokens, out var maxTokensStr) &&
+                int.TryParse(maxTokensStr, out var maxTokens))
                 _modelOptions["max_tokens"] = maxTokens;
-            if (int.TryParse(settings[SettingKeys.Translation.ModelReasoningBudget], out var reasoningBudget))
+            if (settings.TryGetValue(SettingKeys.Translation.ModelReasoningBudget, out var rbStr) &&
+                int.TryParse(rbStr, out var reasoningBudget))
                 _modelOptions["reasoning_budget"] = reasoningBudget;
-            if (!string.IsNullOrWhiteSpace(settings[SettingKeys.Translation.ModelChatTemplateKwargs]))
-                _modelOptions["chat_template_kwargs"] = settings[SettingKeys.Translation.ModelChatTemplateKwargs];
-            if (!string.IsNullOrWhiteSpace(settings[SettingKeys.Translation.ModelReasoningEffort]))
-                _modelOptions["reasoning_effort"] = settings[SettingKeys.Translation.ModelReasoningEffort];
+            if (settings.TryGetValue(SettingKeys.Translation.ModelChatTemplateKwargs, out var kwargsStr) &&
+                !string.IsNullOrWhiteSpace(kwargsStr))
+                _modelOptions["chat_template_kwargs"] = kwargsStr;
+            if (settings.TryGetValue(SettingKeys.Translation.ModelReasoningEffort, out var effortStr) &&
+                !string.IsNullOrWhiteSpace(effortStr))
+                _modelOptions["reasoning_effort"] = effortStr;
 
             _initialized = true;
         }
