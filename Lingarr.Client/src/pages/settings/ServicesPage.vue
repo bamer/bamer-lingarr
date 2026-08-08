@@ -3,10 +3,12 @@
         class="grid grid-flow-row auto-rows-max grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3">
         <ServicesSettings />
         <TranslationSettings />
+        <ModelConfigSettings />
     </div>
 </template>
 
 <script setup lang="ts">
 import ServicesSettings from '@/components/features/settings/ServicesSettings.vue'
 import TranslationSettings from '@/components/features/settings/TranslationSettings.vue'
+import ModelConfigSettings from '@/components/features/settings/ModelConfigSettings.vue'
 </script>

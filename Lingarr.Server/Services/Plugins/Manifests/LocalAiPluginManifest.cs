@@ -42,56 +42,6 @@ public sealed class LocalAiPluginManifest : IPluginManifest
             Type = PluginSettingType.Secret,
             Required = false,
             Description = "Bearer token if the deployment requires authentication. Stored encrypted."
-        },
-        // Model options
-        new()
-        {
-            Key = SettingKeys.Translation.ModelTemperature,
-            Label = "Temperature",
-            Type = PluginSettingType.Number,
-            Required = false,
-            Default = "0.6",
-            Description = "Randomness (0.0–2.0). Lower = more deterministic translations."
-        },
-        new()
-        {
-            Key = SettingKeys.Translation.ModelTopP,
-            Label = "Top P",
-            Type = PluginSettingType.Number,
-            Required = false,
-            Description = "Nucleus sampling (0.0–1.0). Leave empty to use model default."
-        },
-        new()
-        {
-            Key = SettingKeys.Translation.ModelMaxTokens,
-            Label = "Max Tokens",
-            Type = PluginSettingType.Number,
-            Required = false,
-            Description = "Maximum tokens in the response. Leave empty for model default."
-        },
-        new()
-        {
-            Key = SettingKeys.Translation.ModelReasoningBudget,
-            Label = "Reasoning Budget",
-            Type = PluginSettingType.Number,
-            Required = false,
-            Description = "For models with reasoning (e.g. DeepSeek R1). Leave empty to disable."
-        },
-        new()
-        {
-            Key = SettingKeys.Translation.ModelChatTemplateKwargs,
-            Label = "Chat Template Kwargs",
-            Type = PluginSettingType.Text,
-            Required = false,
-            Description = "Extra kwargs passed to the chat template (JSON format). Leave empty to disable."
-        },
-        new()
-        {
-            Key = SettingKeys.Translation.ModelReasoningEffort,
-            Label = "Reasoning Effort",
-            Type = PluginSettingType.Text,
-            Required = false,
-            Description = "Reasoning effort level (e.g. 'low', 'medium', 'high'). Leave empty to disable."
         }
     ];
 }

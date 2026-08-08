@@ -133,12 +133,15 @@ public class SettingService : ISettingService
         var setting = await _dbContext.Settings.FirstOrDefaultAsync(s => s.Key == key);
         if (setting == null)
         {
-            return false;
+            setting = new Core.Entities.Setting { Key = key, Value = value };
+            _dbContext.Settings.Add(setting);
         }
-
-        setting.Value = value;
+        else
+        {
+            setting.Value = value;
+        }
         await _dbContext.SaveChangesAsync();
-        OnSettingChange(setting.Key);
+        OnSettingChange(key);
         return true;
     }
 
@@ -150,22 +153,22 @@ public class SettingService : ISettingService
             .Where(s => keys.Contains(s.Key))
             .ToDictionaryAsync(s => s.Key, s => s);
 
-        if (existingSettings.Count != keys.Count)
-        {
-            // Not all settings were found
-            return false;
-        }
-
         foreach (var setting in settings)
         {
-            var existingSetting = existingSettings[setting.Key];
-            existingSetting.Value = setting.Value;
+            if (existingSettings.TryGetValue(setting.Key, out var existing))
+            {
+                existing.Value = setting.Value;
+            }
+            else
+            {
+                _dbContext.Settings.Add(new Core.Entities.Setting { Key = setting.Key, Value = setting.Value });
+            }
         }
 
         await _dbContext.SaveChangesAsync();
-        foreach (var setting in settings)
+        foreach (var key in settings.Keys)
         {
-            OnSettingChange(setting.Key);
+            OnSettingChange(key);
         }
         return true;
     }

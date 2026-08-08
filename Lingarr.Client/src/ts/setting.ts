@@ -63,7 +63,13 @@ export const SETTINGS = {
     GEMINI_REQUEST_TEMPLATE: 'gemini_request_template',
     LANGUAGE_CODE_FORMAT: 'language_code_format',
     RADARR_DEFAULT_INCLUDE: 'radarr_default_include',
-    SONARR_DEFAULT_INCLUDE: 'sonarr_default_include'
+    SONARR_DEFAULT_INCLUDE: 'sonarr_default_include',
+    MODEL_TEMPERATURE: 'model_temperature',
+    MODEL_TOP_P: 'model_top_p',
+    MODEL_MAX_TOKENS: 'model_max_tokens',
+    MODEL_REASONING_BUDGET: 'model_reasoning_budget',
+    MODEL_CHAT_TEMPLATE_KWARGS: 'model_chat_template_kwargs',
+    MODEL_REASONING_EFFORT: 'model_reasoning_effort'
 } as const
 
 export interface ISettings {
@@ -128,6 +134,12 @@ export interface ISettings {
     language_code_format: string
     radarr_default_include: string
     sonarr_default_include: string
+    model_temperature: string
+    model_top_p: string
+    model_max_tokens: string
+    model_reasoning_budget: string
+    model_chat_template_kwargs: string
+    model_reasoning_effort: string
 }
 
 
