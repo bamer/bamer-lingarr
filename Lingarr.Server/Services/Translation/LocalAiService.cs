@@ -215,7 +215,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     /// <summary>
     /// Translates a batch of subtitles in a single API call using structured outputs fallback
     /// Since LocalAI may not support structured outputs, we'll attempt structured format first,
-    /// then fall back to regular parsing if needed
+    /// then fall back to regular parsing if needed. Responses that cannot be parsed are retried
+    /// using the configured retry settings, as local models occasionally emit malformed JSON.
     /// </summary>
     /// <param name="subtitleBatch">List of subtitles with position and content</param>
     /// <param name="sourceLanguage">Source language code</param>
@@ -254,6 +255,21 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 _logger.LogWarning(
                     "{ServiceName} received {StatusCode}. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
                     "LocalAI", ex.StatusCode, delay, attempt, _maxRetries);
+            }
+            catch (TranslationParseException ex)
+            {
+                if (attempt == _maxRetries)
+                {
+                    _logger.LogError(ex, "Max retries exhausted for batch translation, the model kept returning an unparsable response");
+                    throw new TranslationException("Retry limit reached after unparsable response.", ex);
+                }
+
+                _logger.LogWarning(
+                    "{ServiceName} returned an unparsable response. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", delay, attempt, _maxRetries);
+
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -401,7 +417,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             var responseWrapper = JsonSerializer.Deserialize<JsonElement>(translatedJson);
             if (!responseWrapper.TryGetProperty("translations", out var translationsElement))
             {
-                throw new TranslationException("Response does not contain 'translations' property");
+                throw new TranslationParseException("Response does not contain 'translations' property");
             }
 
             var translatedItems =
@@ -409,7 +425,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
             if (translatedItems == null)
             {
-                throw new TranslationException("Failed to deserialize translated subtitles");
+                throw new TranslationParseException("Failed to deserialize translated subtitles");
             }
 
             return MergeByPosition(translatedItems);
@@ -417,7 +433,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse structured JSON response: {Json}", translatedJson);
-            throw new TranslationException("Failed to parse structured translated subtitles", ex);
+            throw new TranslationParseException("Failed to parse structured translated subtitles", ex);
         }
     }
 
@@ -495,7 +511,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
             if (translatedItems == null)
             {
-                throw new TranslationException("Failed to deserialize translated subtitles from JSON parsing");
+                throw new TranslationParseException("Failed to deserialize translated subtitles from JSON parsing");
             }
 
             return MergeByPosition(translatedItems);
@@ -503,7 +519,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse JSON response: {Json}", translatedJson);
-            throw new TranslationException("Failed to parse JSON translated subtitles", ex);
+            throw new TranslationParseException("Failed to parse JSON translated subtitles", ex);
         }
     }
 
@@ -574,7 +590,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
             if (translatedItems == null)
             {
-                throw new TranslationException("Failed to deserialize translated subtitles from generate API");
+                throw new TranslationParseException("Failed to deserialize translated subtitles from generate API");
             }
 
             return MergeByPosition(translatedItems);
@@ -582,7 +598,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         catch (JsonException ex)
         {
             _logger.LogError(ex, "Failed to parse generate API JSON response: {Json}", translatedJson);
-            throw new TranslationException("Failed to parse generate API translated subtitles", ex);
+            throw new TranslationParseException("Failed to parse generate API translated subtitles", ex);
         }
     }
 
