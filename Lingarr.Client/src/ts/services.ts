@@ -16,7 +16,9 @@ import {
     IPluginManifest,
     IPluginOptionsResponse,
     IPluginStatus,
-    IPluginSummary
+    IPluginSummary,
+    IProofreadLineApplyRequest,
+    IProofreadLineRequest
 } from '@/ts'
 
 export interface Services {
@@ -107,6 +109,8 @@ export interface ITranslateService {
         mediaType: MediaType
     ): Promise<T>
     getLanguages<T>(): Promise<T>
+    proofreadStatus<T>(): Promise<T>
+    proofreadLine<T>(request: IProofreadLineRequest): Promise<T>
 }
 
 export interface ITranslationRequestService {
@@ -124,6 +128,8 @@ export interface ITranslationRequestService {
     retryAllFailed<T>(): Promise<T>
     resumeAllFailed<T>(): Promise<T>
     resume<T>(translationRequest: ITranslationRequest): Promise<T>
+    proofread<T>(translationRequest: ITranslationRequest): Promise<T>
+    applyProofreadLine<T>(request: IProofreadLineApplyRequest): Promise<T>
 }
 
 export interface IScheduleService {

@@ -233,6 +233,8 @@ async function handleAction(translationRequest: ITranslationRequest, action: TRA
             return await translationRequestStore.retry(translationRequest)
         case TRANSLATION_ACTIONS.RESUME:
             return await translationRequestStore.resume(translationRequest)
+        case TRANSLATION_ACTIONS.PROOFREAD:
+            return await translationRequestStore.proofread(translationRequest)
         default:
             console.error('unknown translation request action: ' + action)
     }
@@ -246,6 +248,7 @@ function confirmRetryFailed() {
 
 onMounted(async () => {
     await translationRequestStore.fetch()
+    await translationRequestStore.fetchProofreadStatus()
     hubConnection.value = await signalR.connect(
         'TranslationRequests',
         '/signalr/TranslationRequests'
