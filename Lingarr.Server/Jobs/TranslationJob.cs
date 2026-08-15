@@ -73,6 +73,7 @@ public class TranslationJob
                 jobId);
             await _eventService.LogEvent(request.Id, TranslationStatus.InProgress);
             await _translationRequestService.UpdateActiveCount();
+            await _progressService.Emit(request, 0);
 
             _logger.LogInformation("TranslateJob started for subtitle: |Green|{filePath}|/Green|",
                 translationRequest.SubtitleToTranslate);
