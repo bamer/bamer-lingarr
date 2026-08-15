@@ -400,9 +400,27 @@ public class TranslationRequestService : ITranslationRequestService
             return null;
         }
 
+        // Delete old translated lines so the job re-translates from scratch
+        var oldLines = await _dbContext.TranslationRequestLines
+            .Where(line => line.TranslationRequestId == translationRequest.Id)
+            .ToListAsync();
+        _dbContext.TranslationRequestLines.RemoveRange(oldLines);
 
-        var newTranslationRequestId = await EnqueueRequest(translationRequest);
-        return $"Translation request with id {retryRequest.Id} has been restarted, new job id {newTranslationRequestId}";
+        // Reset the request to Pending for a fresh start
+        translationRequest.Status = TranslationStatus.Pending;
+        translationRequest.ErrorMessage = null;
+        translationRequest.StackTrace = null;
+        translationRequest.CompletedAt = null;
+        translationRequest.TranslatedSubtitle = null;
+        await _dbContext.SaveChangesAsync();
+        await _eventService.LogEvent(translationRequest.Id, TranslationStatus.Pending, "Retried from scratch");
+
+        var jobId = _backgroundJobClient.Enqueue<TranslationJob>(job =>
+            job.Execute(translationRequest, CancellationToken.None));
+        await UpdateTranslationRequest(translationRequest, TranslationStatus.Pending, jobId);
+        await UpdateActiveCount();
+
+        return $"Translation request with id {retryRequest.Id} has been restarted from scratch";
     }
 
     /// <inheritdoc />
