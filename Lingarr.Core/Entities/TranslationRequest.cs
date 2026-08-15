@@ -1,4 +1,5 @@
-﻿using Lingarr.Core.Enum;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using Lingarr.Core.Enum;
 
 namespace Lingarr.Core.Entities;
 
@@ -17,4 +18,11 @@ public class TranslationRequest : BaseEntity
     public DateTime? CompletedAt { get; set; }
     public string? ErrorMessage { get; set; }
     public string? StackTrace { get; set; }
+
+    [NotMapped]
+    public int Progress => Status switch
+    {
+        TranslationStatus.Completed => 100,
+        _ => 0
+    };
 }
