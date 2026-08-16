@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.5.0] - 2026-08-16
+
+### Added
+- **Partial translation status** — Batch translations with missing lines now auto-retry using existing retry settings (MaxRetries, RetryDelay). If lines still fail after retries, status is set to "Partial" with failed positions stored.
+- **Failed positions tracking** — `TranslationRequest` entity now stores which line positions failed translation in `FailedPositionsString`.
+
+### Changed
+- **Update detector** — Now checks your GitHub repo (`bamer/bamer-lingarr`) instead of the original Lingarr API.
+- **Batch translation flow** — `TranslateSubtitlesBatch` now returns `(subtitles, failedPositions)` tuple. Retry logic added per-batch with configurable attempts.
+
 ## [1.1.0] - 2026-08-08
 
 ### Fixed

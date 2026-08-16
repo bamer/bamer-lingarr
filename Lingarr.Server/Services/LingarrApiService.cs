@@ -13,8 +13,8 @@ public class LingarrApiService : ILingarrApiService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<LingarrApiService> _logger;
     private readonly IMemoryCache _cache;
-    private readonly string _baseUrl;
     private const string CacheKeyLatestVersion = "LingarrApi_LatestVersion";
+    private const string GitHubRepo = "bamer/bamer-lingarr";
 
     public LingarrApiService(
         IHttpClientFactory httpClientFactory,
@@ -24,12 +24,6 @@ public class LingarrApiService : ILingarrApiService
         _httpClientFactory = httpClientFactory;
         _logger = logger;
         _cache = cache;
-
-        _baseUrl = new UriBuilder
-        {
-            Scheme = Uri.UriSchemeHttps,
-            Host = $"api.{LingarrVersion.Name.ToLower()}.com"
-        }.Uri.ToString();
     }
 
     public async Task<string?> GetLatestVersion()
@@ -37,7 +31,7 @@ public class LingarrApiService : ILingarrApiService
         // Check cache first
         if (_cache.TryGetValue(CacheKeyLatestVersion, out string? cachedVersion))
         {
-            _logger.LogDebug("Returning cached version information from Lingarr API");
+            _logger.LogDebug("Returning cached version information from GitHub");
             return cachedVersion;
         }
 
@@ -46,38 +40,39 @@ public class LingarrApiService : ILingarrApiService
             var httpClient = _httpClientFactory.CreateClient();
             httpClient.DefaultRequestHeaders.Add("User-Agent", $"{LingarrVersion.Name}/{LingarrVersion.Number}");
 
-            var response = await httpClient.GetAsync($"{_baseUrl}/version/latest");
+            var response = await httpClient.GetAsync($"https://api.github.com/repos/{GitHubRepo}/releases/latest");
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Failed to get latest version from Lingarr API: {StatusCode}",
+                _logger.LogWarning("Failed to get latest version from GitHub: {StatusCode}",
                     response.StatusCode);
                 return null;
             }
 
             var content = await response.Content.ReadAsStringAsync();
-            var versionResponse = JsonSerializer.Deserialize<VersionResponse>(content,
+            var releaseResponse = JsonSerializer.Deserialize<GitHubReleaseResponse>(content,
                 new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
                 });
 
-            if (versionResponse?.Version != null)
+            var version = releaseResponse?.TagName;
+            if (!string.IsNullOrEmpty(version))
             {
                 var cacheOptions = new MemoryCacheEntryOptions()
                     .SetAbsoluteExpiration(TimeSpan.FromHours(24));
-                _cache.Set(CacheKeyLatestVersion, versionResponse.Version, cacheOptions);
+                _cache.Set(CacheKeyLatestVersion, version, cacheOptions);
 
-                _logger.LogInformation("Retrieved latest version: {Version}", versionResponse.Version);
-                return versionResponse.Version;
+                _logger.LogInformation("Retrieved latest version from GitHub: {Version}", version);
+                return version;
             }
 
-            _logger.LogWarning("Lingarr API returned empty version");
+            _logger.LogWarning("GitHub release returned empty version");
             return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to fetch latest version from Lingarr API");
+            _logger.LogError(ex, "Failed to fetch latest version from GitHub");
             return null;
         }
     }
@@ -93,7 +88,12 @@ public class LingarrApiService : ILingarrApiService
 
             var signature = GenerateHmac(json);
             var httpClient = _httpClientFactory.CreateClient();
-            var request = new HttpRequestMessage(HttpMethod.Post, _baseUrl)
+            var baseUrl = new UriBuilder
+            {
+                Scheme = Uri.UriSchemeHttps,
+                Host = $"api.{LingarrVersion.Name.ToLower()}.com"
+            }.Uri.ToString();
+            var request = new HttpRequestMessage(HttpMethod.Post, baseUrl)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
             };
@@ -125,8 +125,8 @@ public class LingarrApiService : ILingarrApiService
         return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
     }
 
-    private class VersionResponse
+    private class GitHubReleaseResponse
     {
-        public string? Version { get; set; }
+        public string? TagName { get; set; }
     }
 }

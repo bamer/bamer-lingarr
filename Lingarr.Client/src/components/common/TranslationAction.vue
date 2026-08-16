@@ -91,7 +91,8 @@ const resumable = computed(
 
 const proofreadable = computed(
     () =>
-        props.item.status === TRANSLATION_STATUS.COMPLETED &&
+        (props.item.status === TRANSLATION_STATUS.COMPLETED ||
+         props.item.status === TRANSLATION_STATUS.PARTIAL) &&
         !!props.item.translatedSubtitle &&
         translationRequestStore.proofreadSupported
 )

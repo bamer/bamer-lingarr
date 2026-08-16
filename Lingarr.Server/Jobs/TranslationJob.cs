@@ -197,6 +197,7 @@ public class TranslationJob
             }
 
             List<SubtitleItem> translatedSubtitles;
+            List<int> failedPositions = [];
             if (settings[SettingKeys.Translation.UseBatchTranslation] == "true"
                 && services.Any(entry => entry.Service is IBatchTranslationService))
             {
@@ -205,17 +206,30 @@ public class TranslationJob
                     ? batchSize
                     : 10000;
 
+                var maxRetries = int.TryParse(settings[SettingKeys.Translation.MaxRetries], out var retries)
+                    ? retries
+                    : 3;
+
+                var retryDelaySeconds = int.TryParse(settings[SettingKeys.Translation.RetryDelay], out var delaySeconds)
+                    ? delaySeconds
+                    : 5;
+
                 _logger.LogInformation(
                     "Using batch translation with max batch size: {maxBatchSize} for subtitle: {filePath}",
                     maxSize, translationRequest.SubtitleToTranslate);
 
-                translatedSubtitles = await translator.TranslateSubtitlesBatch(
+                var (result, failed) = await translator.TranslateSubtitlesBatch(
                     subtitles,
                     request,
                     stripSubtitleFormatting,
                     preserveLineBreaks,
                     maxSize,
+                    maxRetries,
+                    retryDelaySeconds,
                     cancellationToken);
+
+                translatedSubtitles = result;
+                failedPositions = failed;
             }
             else
             {
@@ -270,7 +284,7 @@ public class TranslationJob
             }
 
             await WriteSubtitles(request, translatedSubtitles, stripSubtitleFormatting, subtitleTag, removeLanguageTag);
-            await HandleCompletion(jobName, request, cancellationToken);
+            await HandleCompletion(jobName, request, failedPositions, cancellationToken);
         }
         catch (TaskCanceledException)
         {
@@ -326,12 +340,26 @@ public class TranslationJob
     private async Task HandleCompletion(
         string jobName,
         TranslationRequest translationRequest,
+        List<int> failedPositions,
         CancellationToken cancellationToken)
     {
         translationRequest.CompletedAt = DateTime.UtcNow;
-        translationRequest.Status = TranslationStatus.Completed;
+
+        if (failedPositions.Count > 0)
+        {
+            translationRequest.Status = TranslationStatus.Partial;
+            translationRequest.FailedPositionsString = string.Join(",", failedPositions);
+            _logger.LogWarning(
+                "Translation completed with {Count} failed lines at positions: {Positions}",
+                failedPositions.Count, string.Join(", ", failedPositions.Take(10)));
+        }
+        else
+        {
+            translationRequest.Status = TranslationStatus.Completed;
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
-        await _eventService.LogEvent(translationRequest.Id, TranslationStatus.Completed);
+        await _eventService.LogEvent(translationRequest.Id, translationRequest.Status);
         await _translationRequestService.UpdateActiveCount();
         await _progressService.Emit(translationRequest, 100);
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());

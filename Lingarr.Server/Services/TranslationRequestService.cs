@@ -888,13 +888,13 @@ public class TranslationRequestService : ITranslationRequestService
                     PlaintextLines = new List<string> { item.Line }
                 }).ToList();
 
-                await subtitleTranslator.TranslateSubtitlesBatch(
+                var (translatedItems, _) = await subtitleTranslator.TranslateSubtitlesBatch(
                     subtitleItems,
                     translationRequest,
                     stripSubtitleFormatting,
                     preserveLineBreaks,
                     maxSize,
-                    cancellationToken);
+                    cancellationToken: cancellationToken);
 
                 results = subtitleItems.Select(subtitle => new BatchTranslatedLine
                 {

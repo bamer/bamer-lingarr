@@ -278,7 +278,8 @@ const reversedLines = computed(() => (detail.value ? [...detail.value.lines].rev
 
 const editable = computed(
     () =>
-        detail.value?.status === TRANSLATION_STATUS.COMPLETED &&
+        (detail.value?.status === TRANSLATION_STATUS.COMPLETED ||
+         detail.value?.status === TRANSLATION_STATUS.PARTIAL) &&
         !!detail.value?.translatedSubtitle
 )
 
@@ -291,12 +292,14 @@ const showProgress = computed(() => {
     const status = detail.value.status
     return (
         (status === TRANSLATION_STATUS.INPROGRESS && progress.value > 0) ||
-        status === TRANSLATION_STATUS.COMPLETED
+        status === TRANSLATION_STATUS.COMPLETED ||
+        status === TRANSLATION_STATUS.PARTIAL
     )
 })
 
 const displayProgress = computed(() =>
-    detail.value?.status === TRANSLATION_STATUS.COMPLETED ? 100 : progress.value
+    (detail.value?.status === TRANSLATION_STATUS.COMPLETED ||
+     detail.value?.status === TRANSLATION_STATUS.PARTIAL) ? 100 : progress.value
 )
 
 const handleProgress = (requestProgress: IRequestProgress) => {

@@ -16,6 +16,8 @@ const displayStatus = computed(() => {
     switch (props.translationStatus) {
         case TRANSLATION_STATUS.INPROGRESS:
             return 'In Progress'
+        case TRANSLATION_STATUS.PARTIAL:
+            return 'Partial'
         default:
             return props.translationStatus
     }

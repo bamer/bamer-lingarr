@@ -281,12 +281,14 @@ public class SubtitleTranslationService
     /// <summary>
     /// Translates subtitles in batch mode.
     /// </summary>
-    public async Task<List<SubtitleItem>> TranslateSubtitlesBatch(
+    public async Task<(List<SubtitleItem> Subtitles, List<int> FailedPositions)> TranslateSubtitlesBatch(
         List<SubtitleItem> subtitles,
         TranslationRequest translationRequest,
         bool stripSubtitleFormatting,
         bool preserveLineBreaks,
         int batchSize = 0,
+        int maxRetries = 0,
+        int retryDelaySeconds = 5,
         CancellationToken cancellationToken = default)
     {
         if (_progressService == null)
@@ -301,6 +303,7 @@ public class SubtitleTranslationService
 
         var totalBatches = (int)Math.Ceiling((double)subtitles.Count / batchSize);
         var processedSubtitles = 0;
+        var allFailedPositions = new List<int>();
 
         for (var batchIndex = 0; batchIndex < totalBatches; batchIndex++)
         {
@@ -315,7 +318,7 @@ public class SubtitleTranslationService
                 .Take(batchSize)
                 .ToList();
 
-            var newlyTranslated = await ProcessSubtitleBatch(
+            var (newlyTranslated, failedPositions) = await ProcessSubtitleBatch(
                 currentBatch,
                 translationRequest.SourceLanguage,
                 translationRequest.TargetLanguage,
@@ -340,19 +343,69 @@ public class SubtitleTranslationService
                 await _progressService!.EmitLines(translationRequest, lineData);
             }
 
+            if (failedPositions.Count > 0 && maxRetries > 0)
+            {
+                _logger.LogWarning(
+                    "{Count} lines failed in batch {BatchIndex}, retrying up to {MaxRetries} times",
+                    failedPositions.Count, batchIndex + 1, maxRetries);
+
+                for (var retry = 0; retry < maxRetries && failedPositions.Count > 0; retry++)
+                {
+                    if (cancellationToken.IsCancellationRequested) break;
+
+                    _logger.LogInformation(
+                        "Retry attempt {Attempt}/{MaxRetries} for {Count} failed lines",
+                        retry + 1, maxRetries, failedPositions.Count);
+
+                    await Task.Delay(retryDelaySeconds * 1000, cancellationToken);
+
+                    var retryBatch = currentBatch
+                        .Where(s => failedPositions.Contains(s.Position))
+                        .ToList();
+
+                    var (retriedTranslated, stillFailed) = await ProcessSubtitleBatch(
+                        retryBatch,
+                        translationRequest.SourceLanguage,
+                        translationRequest.TargetLanguage,
+                        stripSubtitleFormatting,
+                        preserveLineBreaks,
+                        cancellationToken);
+
+                    if (retriedTranslated.Count > 0)
+                    {
+                        var retryLineData = retriedTranslated.Select(subtitle =>
+                        {
+                            _translationByPosition.TryGetValue(subtitle.Position, out var entry);
+                            return new TranslatedLineData
+                            {
+                                Position = subtitle.Position,
+                                Source = string.Join(" ", stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines),
+                                Target = string.Join(" ", subtitle.TranslatedLines),
+                                Service = entry.Service,
+                                Pair = entry.Pair
+                            };
+                        }).ToList();
+                        await _progressService!.EmitLines(translationRequest, retryLineData);
+                    }
+
+                    failedPositions = stillFailed;
+                }
+            }
+
+            allFailedPositions.AddRange(failedPositions);
             processedSubtitles += currentBatch.Count;
             await EmitProgress(translationRequest, processedSubtitles, subtitles.Count);
         }
 
         _lastProgression = -1;
-        return subtitles;
+        return (subtitles, allFailedPositions);
     }
 
     /// <summary>
     /// Translates a batch of subtitles, walking batch-capable services in best-match order
     /// and falling back on per-service failure.
     /// </summary>
-    public async Task<List<SubtitleItem>> ProcessSubtitleBatch(
+    public async Task<(List<SubtitleItem> Subtitles, List<int> FailedPositions)> ProcessSubtitleBatch(
         List<SubtitleItem> currentBatch,
         string sourceLanguage,
         string targetLanguage,
@@ -363,7 +416,7 @@ public class SubtitleTranslationService
         var toTranslate = currentBatch.Where(subtitle => subtitle.TranslatedLines.Count == 0).ToList();
         if (toTranslate.Count == 0)
         {
-            return [];
+            return ([], []);
         }
 
         if (!_services.Any(service => service.BatchService is not null))
@@ -386,14 +439,14 @@ public class SubtitleTranslationService
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                await RunBatch(
+                var failedPositions = await RunBatch(
                     candidate,
                     toTranslate,
                     stripSubtitleFormatting,
                     preserveLineBreaks,
                     cancellationToken);
                 LogFallback(candidate, sourceLanguage, targetLanguage);
-                return toTranslate;
+                return (toTranslate, failedPositions);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -409,7 +462,7 @@ public class SubtitleTranslationService
         throw new TranslationException("All configured batch translation services failed.", lastError);
     }
 
-    private async Task RunBatch(
+    private async Task<List<int>> RunBatch(
         TranslationCandidate candidate,
         List<SubtitleItem> toTranslate,
         bool stripSubtitleFormatting,
@@ -433,13 +486,13 @@ public class SubtitleTranslationService
             candidate.Pair.Target,
             cancellationToken);
 
+        var failedPositions = new List<int>();
         foreach (var subtitle in toTranslate)
         {
             var contentLines = stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines;
             if (!batchResults.TryGetValue(subtitle.Position, out var translated))
             {
-                _logger.LogWarning("Translation not found for subtitle at position {Position} using original line.", subtitle.Position);
-                subtitle.TranslatedLines = contentLines;
+                failedPositions.Add(subtitle.Position);
                 continue;
             }
 
@@ -456,6 +509,8 @@ public class SubtitleTranslationService
                 subtitle.Position);
             _translationByPosition[subtitle.Position] = (candidate.Entry.Name, candidate.Pair);
         }
+
+        return failedPositions;
     }
 
     /// <summary>

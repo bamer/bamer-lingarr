@@ -182,7 +182,8 @@ export const TRANSLATION_STATUS = {
     COMPLETED: 'Completed',
     FAILED: 'Failed',
     CANCELLED: 'Cancelled',
-    INTERRUPTED: 'Interrupted'
+    INTERRUPTED: 'Interrupted',
+    PARTIAL: 'Partial'
 } as const
 
 export type TranslationStatus = (typeof TRANSLATION_STATUS)[keyof typeof TRANSLATION_STATUS]

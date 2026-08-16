@@ -147,7 +147,8 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
         },
         async removeCompleted() {
             const completed = this.translationRequests.items.filter(
-                (r) => r.status === TRANSLATION_STATUS.COMPLETED
+                (r) => r.status === TRANSLATION_STATUS.COMPLETED ||
+                       r.status === TRANSLATION_STATUS.PARTIAL
             )
             for (const request of completed) {
                 await services.translationRequest.remove<string>(request)

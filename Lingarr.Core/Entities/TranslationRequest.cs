@@ -18,6 +18,14 @@ public class TranslationRequest : BaseEntity
     public DateTime? CompletedAt { get; set; }
     public string? ErrorMessage { get; set; }
     public string? StackTrace { get; set; }
+    public string? FailedPositionsString { get; set; }
+
+    [NotMapped]
+    public int[] FailedPositions => string.IsNullOrEmpty(FailedPositionsString)
+        ? []
+        : FailedPositionsString.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(int.Parse)
+            .ToArray();
 
     [NotMapped]
     public int Progress => Status switch
