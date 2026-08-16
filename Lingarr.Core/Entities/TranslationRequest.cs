@@ -18,6 +18,7 @@ public class TranslationRequest : BaseEntity
     public DateTime? CompletedAt { get; set; }
     public string? ErrorMessage { get; set; }
     public string? StackTrace { get; set; }
+    [Column("failed_positions")]
     public string? FailedPositionsString { get; set; }
 
     [NotMapped]
