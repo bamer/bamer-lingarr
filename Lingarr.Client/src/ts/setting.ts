@@ -74,7 +74,8 @@ export const SETTINGS = {
     MODEL_MAX_TOKENS: 'model_max_tokens',
     MODEL_REASONING_BUDGET: 'model_reasoning_budget',
     MODEL_CHAT_TEMPLATE_KWARGS: 'model_chat_template_kwargs',
-    MODEL_REASONING_EFFORT: 'model_reasoning_effort'
+    MODEL_REASONING_EFFORT: 'model_reasoning_effort',
+    MODEL_STRUCTURED_OUTPUT: 'model_structured_output'
 } as const
 
 export interface ISettings {
@@ -151,6 +152,7 @@ export interface ISettings {
     model_reasoning_budget: string
     model_chat_template_kwargs: string
     model_reasoning_effort: string
+    model_structured_output: string
 }
 
 

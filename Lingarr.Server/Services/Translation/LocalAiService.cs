@@ -23,6 +23,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     private string? _chatRequestTemplate;
     private string? _generateRequestTemplate;
     private bool _isChatEndpoint;
+    private bool _useStructuredOutput;
     private bool _initialized;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private Dictionary<string, object?> _modelOptions = new();
@@ -83,7 +84,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 SettingKeys.Translation.ModelMaxTokens,
                 SettingKeys.Translation.ModelReasoningBudget,
                 SettingKeys.Translation.ModelChatTemplateKwargs,
-                SettingKeys.Translation.ModelReasoningEffort
+                SettingKeys.Translation.ModelReasoningEffort,
+                SettingKeys.Translation.ModelStructuredOutput
             ]);
             _model = settings[SettingKeys.Translation.LocalAi.Model];
             _endpoint = settings[SettingKeys.Translation.LocalAi.Endpoint];
@@ -109,6 +111,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             // Normalize endpoint URLs — append path if only base URL is provided
             _endpoint = NormalizeEndpoint(_endpoint);
             _isChatEndpoint = _endpoint.TrimEnd('/').EndsWith("completions", StringComparison.OrdinalIgnoreCase);
+            _useStructuredOutput = settings.TryGetValue(SettingKeys.Translation.ModelStructuredOutput, out var soStr)
+                && soStr == "true";
 
             var requestTimeout = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
                 out var timeOut)
@@ -356,16 +360,20 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             return await TranslateBatchWithGenerateApi(subtitleBatch, cancellationToken);
         }
 
-        // Try structured output first (OpenAI-compatible format)
-        try
+        // Try structured output only if enabled
+        if (_useStructuredOutput)
         {
-            return await TranslateBatchWithStructuredOutput(subtitleBatch, cancellationToken);
+            try
+            {
+                return await TranslateBatchWithStructuredOutput(subtitleBatch, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Structured output failed, falling back to JSON parsing");
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Structured output failed, falling back to JSON parsing");
-            return await TranslateBatchWithJsonParsing(subtitleBatch, cancellationToken);
-        }
+
+        return await TranslateBatchWithJsonParsing(subtitleBatch, cancellationToken);
     }
 
     private async Task<Dictionary<int, string>> TranslateBatchWithStructuredOutput(

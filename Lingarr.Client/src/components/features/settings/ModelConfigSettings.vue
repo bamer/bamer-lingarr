@@ -63,6 +63,17 @@
                 v-model="reasoningEffort"
                 placeholder=""
                 @update:validation="(val) => (isValid.reasoningEffort = val)" />
+
+            <div class="flex flex-col space-x-2">
+                <span class="font-semibold">Structured Output:</span>
+                Enable structured JSON output for batch translations. Disable if your model does not
+                support it (avoids a failed request on every batch).
+            </div>
+            <ToggleButton v-model="structuredOutput">
+                <span class="text-sm font-medium text-primary-content">
+                    {{ structuredOutput == 'true' ? 'Enabled' : 'Disabled' }}
+                </span>
+            </ToggleButton>
         </template>
     </CardComponent>
 </template>
@@ -74,6 +85,7 @@ import { INPUT_VALIDATION_TYPE, SETTINGS } from '@/ts'
 import CardComponent from '@/components/common/CardComponent.vue'
 import SaveNotification from '@/components/common/SaveNotification.vue'
 import InputComponent from '@/components/common/InputComponent.vue'
+import ToggleButton from '@/components/common/ToggleButton.vue'
 
 const saveNotification = ref<InstanceType<typeof SaveNotification> | null>(null)
 const settingsStore = useSettingStore()
@@ -130,6 +142,14 @@ const reasoningEffort = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.MODEL_REASONING_EFFORT) as string ?? '',
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.MODEL_REASONING_EFFORT, newValue, isValid.reasoningEffort)
+        saveNotification.value?.show()
+    }
+})
+
+const structuredOutput = computed({
+    get: (): string => settingsStore.getSetting(SETTINGS.MODEL_STRUCTURED_OUTPUT) as string ?? 'false',
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.MODEL_STRUCTURED_OUTPUT, newValue, true)
         saveNotification.value?.show()
     }
 })

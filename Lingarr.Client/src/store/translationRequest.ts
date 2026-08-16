@@ -47,6 +47,13 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
             await this.fetch()
         },
         async fetch() {
+            // Preserve SignalR-updated progress values before fetch overwrites items
+            const progressMap = new Map<number, number>()
+            for (const item of this.translationRequests.items) {
+                if (item.progress) {
+                    progressMap.set(item.id, item.progress)
+                }
+            }
             this.translationRequests = await services.translationRequest.requests<
                 IPagedResult<ITranslationRequest>
             >(
@@ -55,6 +62,13 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
                 this.filter.sortBy,
                 this.filter.isAscending
             )
+            // Restore progress values from SignalR updates
+            for (const item of this.translationRequests.items) {
+                const saved = progressMap.get(item.id)
+                if (saved != null && item.progress === 0) {
+                    item.progress = saved
+                }
+            }
         },
         setActiveTranslations(activeTranslations: IActiveTranslation[]) {
             this.activeTranslations = activeTranslations

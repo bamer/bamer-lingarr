@@ -114,6 +114,7 @@ public static class SettingKeys
         public const string ModelReasoningBudget = "model_reasoning_budget";
         public const string ModelChatTemplateKwargs = "model_chat_template_kwargs";
         public const string ModelReasoningEffort = "model_reasoning_effort";
+        public const string ModelStructuredOutput = "model_structured_output";
     }
 
     public static class Automation
