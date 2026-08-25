@@ -39,6 +39,7 @@ export type IFilter = {
     searchQuery: string
     sortBy: string
     isAscending: boolean
+    pageSize?: number
 }
 export type IOptions = {
     label: string

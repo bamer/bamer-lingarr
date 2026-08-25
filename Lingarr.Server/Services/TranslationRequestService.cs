@@ -393,6 +393,32 @@ public class TranslationRequestService : ITranslationRequestService
     }
 
     /// <inheritdoc />
+    public async Task<int> RemoveAllTranslationRequests()
+    {
+        var requests = await _dbContext.TranslationRequests.ToListAsync();
+
+        // Cancel queued/running Hangfire jobs so nothing keeps executing afterwards
+        foreach (var request in requests.Where(request =>
+                     request.JobId != null &&
+                     (request.Status == TranslationStatus.Pending ||
+                      request.Status == TranslationStatus.InProgress)))
+        {
+            _backgroundJobClient.Delete(request.JobId);
+        }
+
+        var requestIds = requests.Select(request => request.Id).ToList();
+        var lines = await _dbContext.TranslationRequestLines
+            .Where(line => requestIds.Contains(line.TranslationRequestId))
+            .ToListAsync();
+        _dbContext.TranslationRequestLines.RemoveRange(lines);
+        _dbContext.TranslationRequests.RemoveRange(requests);
+        await _dbContext.SaveChangesAsync();
+        await UpdateActiveCount();
+
+        return requests.Count;
+    }
+
+    /// <inheritdoc />
     public async Task<string?> RetryTranslationRequest(TranslationRequest retryRequest)
     {
         var translationRequest = await _dbContext.TranslationRequests.FirstOrDefaultAsync(

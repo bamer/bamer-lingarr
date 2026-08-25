@@ -19,6 +19,11 @@
                     @click="confirmRetryFailed">
                     Retry Failed
                 </button>
+                <button
+                    class="hover:text-primary-content/50 cursor-pointer rounded-md border border-error px-2 py-1 text-primary-content transition-colors"
+                    @click="confirmRemoveAll">
+                    Clear All
+                </button>
             </div>
             <div
                 class="flex w-full flex-col gap-2 md:w-fit md:flex-row md:justify-between md:space-x-2">
@@ -175,11 +180,24 @@
                 </div>
             </div>
         </div>
-        <PaginationComponent
-            v-if="translationRequests.totalCount"
-            v-model="filter"
-            :total-count="translationRequests.totalCount"
-            :page-size="translationRequests.pageSize" />
+        <div class="flex flex-wrap items-center justify-center gap-4 md:justify-between">
+            <PaginationComponent
+                v-if="translationRequests.totalCount"
+                v-model="filter"
+                :total-count="translationRequests.totalCount"
+                :page-size="filter.pageSize ?? 20" />
+            <div class="flex items-center gap-2 px-4 pb-4">
+                <label class="text-primary-content/70 text-sm whitespace-nowrap">Per page:</label>
+                <select
+                    :value="filter.pageSize ?? 20"
+                    class="cursor-pointer rounded-md border border-accent bg-secondary px-2 py-1 text-sm text-primary-content"
+                    @change="setPageSize(($event.target as HTMLSelectElement).value)">
+                    <option v-for="size in [20, 50, 100, 200]" :key="size" :value="size">
+                        {{ size }}
+                    </option>
+                </select>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -244,6 +262,22 @@ function confirmRetryFailed() {
     if (window.confirm('Retry will discard already-translated lines and start from scratch. Continue?')) {
         translationRequestStore.retryFailed()
     }
+}
+
+function confirmRemoveAll() {
+    if (window.confirm('Remove ALL translation requests from the list? Running translations will be cancelled.')) {
+        translationRequestStore.removeAll()
+    }
+}
+
+async function setPageSize(value: string) {
+    const pageSize = parseInt(value)
+    if (pageSize === filter.value.pageSize) return
+    await translationRequestStore.setFilter({
+        ...filter.value,
+        pageSize,
+        pageNumber: 1
+    })
 }
 
 onMounted(async () => {

@@ -120,10 +120,12 @@ export interface ITranslationRequestService {
         pageNumber: number,
         searchQuery: string,
         sortBy: string,
-        ascending: boolean
+        ascending: boolean,
+        pageSize: number
     ): Promise<T>
     cancel<T>(translationRequest: ITranslationRequest): Promise<T>
     remove<T>(translationRequest: ITranslationRequest): Promise<T>
+    removeAll<T>(): Promise<T>
     retry<T>(translationRequest: ITranslationRequest): Promise<T>
     retryAllFailed<T>(): Promise<T>
     resumeAllFailed<T>(): Promise<T>

@@ -123,6 +123,16 @@ public class TranslationRequestController : ControllerBase
     }
 
     /// <summary>
+    /// Removes every translation request and cancels their background jobs
+    /// </summary>
+    /// <response code="200">Returns the number of removed requests</response>
+    [HttpPost("remove-all")]
+    public async Task<ActionResult<int>> RemoveAllTranslationRequests()
+    {
+        return Ok(await _translationRequestService.RemoveAllTranslationRequests());
+    }
+
+    /// <summary>
     /// Retries an existing translation request
     /// Does not delete the current one, just reques
     /// The request with the same information

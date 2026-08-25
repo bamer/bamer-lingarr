@@ -112,21 +112,11 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             return false;
         }
 
-        // ponytail: caption files (forced/SDH) must not count as an existing translation,
-        // nor block the whole media — previously one th.forced.srt skipped the movie even
-        // when other target languages were missing (2548 medias silently skipped)
-        if (ignoreCaptions == "true")
-        {
-            subtitles = subtitles.Where(subtitle => string.IsNullOrEmpty(subtitle.Caption)).ToList();
-            if (!subtitles.Any())
-            {
-                _logger.LogInformation(
-                    "Only caption subtitles found for |Green|{FileName}|/Green|, ignoring.",
-                    _media?.FileName);
-                return false;
-            }
-        }
-
+        // ponytail: caption files (forced/SDH) count as "language present" so we don't
+        // retranslate e.g. full th.srt when only th.forced.srt exists — but they no longer
+        // skip the whole media like before (2548 medias blocked because one target had a
+        // caption while other targets were missing). SelectSourceSubtitle already avoids
+        // picking captions as source when ignoreCaptions is on.
         var selected = _subtitleService.SelectSourceSubtitle(subtitles, sourceLanguages, ignoreCaptions);
         if (selected == null || !targetLanguages.Any())
         {

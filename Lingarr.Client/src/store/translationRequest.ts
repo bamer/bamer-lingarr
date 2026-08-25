@@ -25,7 +25,8 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
             searchQuery: '',
             sortBy: 'CreatedAt',
             isAscending: true,
-            pageNumber: 1
+            pageNumber: 1,
+            pageSize: 20
         },
         selectedRequests: [] as ITranslationRequest[],
         selectAll: false,
@@ -60,7 +61,8 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
                 this.filter.pageNumber,
                 this.filter.searchQuery,
                 this.filter.sortBy,
-                this.filter.isAscending
+                this.filter.isAscending,
+                this.filter.pageSize ?? 20
             )
             // Restore progress values from SignalR updates
             for (const item of this.translationRequests.items) {
@@ -94,6 +96,11 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
                     (request) => request.id !== translationRequest.id
                 )
             })
+        },
+        async removeAll() {
+            await services.translationRequest.removeAll<number>()
+            this.clearSelection()
+            await this.fetch()
         },
         async retry(translationRequest: ITranslationRequest) {
             await services.translationRequest.retry<string>(translationRequest)

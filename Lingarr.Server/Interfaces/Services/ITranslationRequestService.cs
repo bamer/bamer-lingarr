@@ -81,6 +81,12 @@ public interface ITranslationRequestService
     );
 
     /// <summary>
+    /// Removes every translation request (cancels running jobs first) and their lines.
+    /// </summary>
+    /// <returns>The number of requests removed</returns>
+    Task<int> RemoveAllTranslationRequests();
+
+    /// <summary>
     /// Retries an existing translation request
     /// </summary>
     /// <param name="retryRequest">The translation request to retry</param>

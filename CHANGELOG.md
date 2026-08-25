@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.9.0] - 2026-08-25
+
+### Added
+- **Per-page selector** — Select at the bottom of the translation panel to choose how many items are displayed per page (20/50/100/200).
+- **Clear All button** — Removes every translation request in one click (with confirmation). Running jobs are cancelled first; lines and requests are deleted.
+
+### Fixed
+- **Caption semantics corrected** — Caption files (forced/SDH) now count as "language present" again: a lone `th.forced.srt` no longer triggers a full Thai re-translation, while still not blocking other missing target languages (regression from 2.8.0 filter).
+
 ## [2.8.0] - 2026-08-25
 
 ### Fixed

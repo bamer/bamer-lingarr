@@ -31,7 +31,8 @@ const service = (
         pageNumber: number,
         searchQuery: string,
         orderBy: string,
-        ascending: boolean
+        ascending: boolean,
+        pageSize: number
     ): Promise<T> {
         return new Promise((resolve, reject) => {
             http.get(
@@ -39,9 +40,21 @@ const service = (
                     pageNumber: pageNumber,
                     searchQuery: searchQuery,
                     orderBy: orderBy,
-                    ascending: ascending
+                    ascending: ascending,
+                    pageSize: pageSize
                 })
             )
+                .then((response: AxiosResponse<T>) => {
+                    resolve(response.data)
+                })
+                .catch((error: AxiosError) => {
+                    reject(error.response)
+                })
+        })
+    },
+    removeAll<T>(): Promise<T> {
+        return new Promise((resolve, reject) => {
+            http.post(`${resource}/remove-all`)
                 .then((response: AxiosResponse<T>) => {
                     resolve(response.data)
                 })
