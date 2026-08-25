@@ -42,10 +42,32 @@ public class AutomatedTranslationJob
         _memoryCache = memoryCache;
     }
 
-    [DisableConcurrentExecution(timeoutInSeconds: 10 * 60)]
+    // ponytail: local gate instead of [DisableConcurrentExecution] — single-instance
+    // deploy; Hangfire's distributed lock survives an ungraceful restart as a zombie
+    // and blocked new runs for the full 10-min timeout ("Slow log ... OnPerforming")
+    private static readonly SemaphoreSlim AutomationGate = new(1, 1);
+
     [AutomaticRetry(Attempts = 0)]
     [Queue("translation")]
     public async Task Execute()
+    {
+        if (!await AutomationGate.WaitAsync(TimeSpan.Zero))
+        {
+            _logger.LogInformation("Automation already running, skipping this trigger.");
+            return;
+        }
+
+        try
+        {
+            await RunAutomation();
+        }
+        finally
+        {
+            AutomationGate.Release();
+        }
+    }
+
+    private async Task RunAutomation()
     {
         var jobName = JobContextFilter.GetCurrentJobTypeName();
         await _scheduleService.UpdateJobState(jobName, JobStatus.Processing.GetDisplayName());

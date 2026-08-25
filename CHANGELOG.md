@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.8.0] - 2026-08-25
+
+### Fixed
+- **Automation blocked by caption files** — With `ignoreCaptions` enabled, one caption file (forced/SDH) for any target language skipped the whole media even when other target languages were missing (~2548 medias silently skipped). Caption files are now filtered upstream: they no longer count as existing translations nor block processing.
+- **Automation stuck on zombie Hangfire lock** — `[DisableConcurrentExecution]` distributed lock survived ungraceful container restarts, blocking new runs for the full 10-min timeout ("Slow log ... OnPerforming"). Replaced with a local `SemaphoreSlim` gate: instant start when free, polite skip when already running.
+
 ## [2.7.0] - 2026-08-24
 
 ### Fixed

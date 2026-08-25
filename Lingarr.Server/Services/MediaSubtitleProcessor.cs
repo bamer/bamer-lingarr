@@ -112,6 +112,21 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             return false;
         }
 
+        // ponytail: caption files (forced/SDH) must not count as an existing translation,
+        // nor block the whole media — previously one th.forced.srt skipped the movie even
+        // when other target languages were missing (2548 medias silently skipped)
+        if (ignoreCaptions == "true")
+        {
+            subtitles = subtitles.Where(subtitle => string.IsNullOrEmpty(subtitle.Caption)).ToList();
+            if (!subtitles.Any())
+            {
+                _logger.LogInformation(
+                    "Only caption subtitles found for |Green|{FileName}|/Green|, ignoring.",
+                    _media?.FileName);
+                return false;
+            }
+        }
+
         var selected = _subtitleService.SelectSourceSubtitle(subtitles, sourceLanguages, ignoreCaptions);
         if (selected == null || !targetLanguages.Any())
         {
@@ -129,22 +144,6 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         }
 
         var languagesToTranslate = targetLanguages.Except(selected.AvailableLanguages).ToList();
-        if (ignoreCaptions == "true")
-        {
-            var targetLanguagesWithCaptions = subtitles
-                .Where(s => targetLanguages.Contains(s.Language) && !string.IsNullOrEmpty(s.Caption))
-                .Select(s => s.Language)
-                .Distinct()
-                .ToList();
-
-            if (targetLanguagesWithCaptions.Any())
-            {
-                _logger.LogInformation(
-                    "Translation skipped because captions exist for target languages: |Green|{CaptionLanguages}|/Green| and ignoreCaptions is disabled",
-                    string.Join(", ", targetLanguagesWithCaptions));
-                return false;
-            }
-        }
         
         var activeStatuses = new[]
         {
