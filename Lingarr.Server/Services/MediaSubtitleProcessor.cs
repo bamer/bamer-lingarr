@@ -65,7 +65,25 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         _hash = CreateHash(subtitles, sourceLanguages, targetLanguages, ignoreCaptions);
         if (!string.IsNullOrEmpty(media.MediaHash) && media.MediaHash == _hash)
         {
-            return false;
+            // Only trust the hash when translation requests actually exist for this media.
+            // A hash burned on a failure path (no source, captions, etc.) must NOT permanently
+            // skip the media — it becomes translatable once subtitles or settings change.
+            var hasActiveRequests = await _dbContext.TranslationRequests
+                .AnyAsync(translationRequest =>
+                    translationRequest.MediaId == media.Id
+                    && translationRequest.MediaType == mediaType
+                    && (translationRequest.Status == TranslationStatus.Pending
+                        || translationRequest.Status == TranslationStatus.InProgress
+                        || translationRequest.Status == TranslationStatus.Completed));
+
+            if (hasActiveRequests)
+            {
+                return false;
+            }
+
+            _logger.LogInformation(
+                "Media {MediaName} has a stale hash without translation requests, re-evaluating.",
+                media.FileName);
         }
         
         _logger.LogInformation("Initiating subtitle processing.");
@@ -91,7 +109,6 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             _logger.LogWarning(
                 "Source or target languages are empty. Source languages: {SourceCount}, Target languages: {TargetCount}",
                 sourceLanguages.Count, targetLanguages.Count);
-            await UpdateHash();
             return false;
         }
 
@@ -108,7 +125,6 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 string.Join(", ", sourceLanguages),
                 string.Join(", ", targetLanguages));
 
-            await UpdateHash();
             return false;
         }
 
@@ -126,7 +142,6 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 _logger.LogInformation(
                     "Translation skipped because captions exist for target languages: |Green|{CaptionLanguages}|/Green| and ignoreCaptions is disabled",
                     string.Join(", ", targetLanguagesWithCaptions));
-                await UpdateHash();
                 return false;
             }
         }
@@ -148,7 +163,6 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         languagesToTranslate = languagesToTranslate.Except(existingTranslationRequests).ToList();
         if (!languagesToTranslate.Any())
         {
-            await UpdateHash();
             return false;
         }
 

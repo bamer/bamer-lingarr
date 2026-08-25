@@ -40,34 +40,44 @@ public class LingarrApiService : ILingarrApiService
             var httpClient = _httpClientFactory.CreateClient();
             httpClient.DefaultRequestHeaders.Add("User-Agent", $"{LingarrVersion.Name}/{LingarrVersion.Number}");
 
+            // Try releases first
             var response = await httpClient.GetAsync($"https://api.github.com/repos/{GitHubRepo}/releases/latest");
-
-            if (!response.IsSuccessStatusCode)
+            if (response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Failed to get latest version from GitHub: {StatusCode}",
-                    response.StatusCode);
-                return null;
-            }
+                var content = await response.Content.ReadAsStringAsync();
+                var releaseResponse = JsonSerializer.Deserialize<GitHubReleaseResponse>(content,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            var content = await response.Content.ReadAsStringAsync();
-            var releaseResponse = JsonSerializer.Deserialize<GitHubReleaseResponse>(content,
-                new JsonSerializerOptions
+                if (!string.IsNullOrEmpty(releaseResponse?.TagName))
                 {
-                    PropertyNameCaseInsensitive = true
-                });
-
-            var version = releaseResponse?.TagName;
-            if (!string.IsNullOrEmpty(version))
-            {
-                var cacheOptions = new MemoryCacheEntryOptions()
-                    .SetAbsoluteExpiration(TimeSpan.FromHours(24));
-                _cache.Set(CacheKeyLatestVersion, version, cacheOptions);
-
-                _logger.LogInformation("Retrieved latest version from GitHub: {Version}", version);
-                return version;
+                    var cacheOptions = new MemoryCacheEntryOptions()
+                        .SetAbsoluteExpiration(TimeSpan.FromHours(24));
+                    _cache.Set(CacheKeyLatestVersion, releaseResponse.TagName, cacheOptions);
+                    _logger.LogInformation("Retrieved latest version from GitHub releases: {Version}", releaseResponse.TagName);
+                    return releaseResponse.TagName;
+                }
             }
 
-            _logger.LogWarning("GitHub release returned empty version");
+            // Fallback to tags if no releases
+            var tagsResponse = await httpClient.GetAsync($"https://api.github.com/repos/{GitHubRepo}/tags");
+            if (tagsResponse.IsSuccessStatusCode)
+            {
+                var tagsContent = await tagsResponse.Content.ReadAsStringAsync();
+                var tags = JsonSerializer.Deserialize<List<GitHubTagResponse>>(tagsContent,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                var latestTag = tags?.FirstOrDefault()?.Name;
+                if (!string.IsNullOrEmpty(latestTag))
+                {
+                    var cacheOptions = new MemoryCacheEntryOptions()
+                        .SetAbsoluteExpiration(TimeSpan.FromHours(24));
+                    _cache.Set(CacheKeyLatestVersion, latestTag, cacheOptions);
+                    _logger.LogInformation("Retrieved latest version from GitHub tags: {Version}", latestTag);
+                    return latestTag;
+                }
+            }
+
+            _logger.LogWarning("No releases or tags found on GitHub for {Repo}", GitHubRepo);
             return null;
         }
         catch (Exception ex)
@@ -128,5 +138,10 @@ public class LingarrApiService : ILingarrApiService
     private class GitHubReleaseResponse
     {
         public string? TagName { get; set; }
+    }
+
+    private class GitHubTagResponse
+    {
+        public string? Name { get; set; }
     }
 }

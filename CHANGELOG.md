@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.7.0] - 2026-08-24
+
+### Fixed
+- **Automation enqueuing nothing** — Media hash was burned on failure paths (no valid source, captions, etc.) in `ProcessSubtitles`, permanently skipping 1477+ media with zero translation requests. `UpdateHash()` now only runs after requests are actually created, and the top-level hash check verifies active requests exist before skipping (self-heals stale hashes, no migration needed).
+- **Logs freezing during heavy load** — Log stream detected new entries by queue count, but the bounded queue (1000) stops growing under flood → stream went silent while logging continued. Entries now carry a monotonic sequence number and the stream tracks a sequence watermark.
+- **Log stream disconnects** — Removed manual `close()` + reconnect timer; the browser's native EventSource auto-reconnect handles drops properly.
+- **Translation panel not updating live** — `RequestProgress` events for unknown request ids were ignored; the list now refreshes so automation-created requests appear as they start.
+
+### Added
+- **Header translation progress bar** — Active translation shows in the header: title (clickable, opens detail page), progress bar, percentage.
+
+## [2.6.0] - 2026-08-16
+
+### Added
+- **Header translation progress** — Active translation now shows in the header bar with title (clickable), progress bar, and percentage.
+- **Update detector fallback** — GitHub version check now falls back to tags if no releases exist.
+- **Log stream reconnect timeout** — Increased to 90 minutes to handle slow local servers during heavy translations.
+
+### Fixed
+- **Duplicate lines on retry** — Failed lines were emitted before retry, causing duplicates in the output.
+- **Batch translation fallback** — `UseBatchTranslation` setting now uses `TryGetValue` to prevent `KeyNotFoundException`.
+- **MaxRetries/RetryDelay settings** — Now uses `TryGetValue` to prevent crashes when keys are missing from DB.
+- **Column name mismatch** — `FailedPositionsString` now correctly maps to `failed_positions` column in MySQL.
+
 ## [2.5.0] - 2026-08-16
 
 ### Added

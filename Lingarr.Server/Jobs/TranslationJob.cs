@@ -198,7 +198,8 @@ public class TranslationJob
 
             List<SubtitleItem> translatedSubtitles;
             List<int> failedPositions = [];
-            if (settings[SettingKeys.Translation.UseBatchTranslation] == "true"
+            if (settings.TryGetValue(SettingKeys.Translation.UseBatchTranslation, out var batchStr)
+                && batchStr == "true"
                 && services.Any(entry => entry.Service is IBatchTranslationService))
             {
                 var maxSize = int.TryParse(settings[SettingKeys.Translation.MaxBatchSize],
@@ -206,11 +207,13 @@ public class TranslationJob
                     ? batchSize
                     : 10000;
 
-                var maxRetries = int.TryParse(settings[SettingKeys.Translation.MaxRetries], out var retries)
+                var maxRetries = settings.TryGetValue(SettingKeys.Translation.MaxRetries, out var retriesStr)
+                    && int.TryParse(retriesStr, out var retries)
                     ? retries
                     : 3;
 
-                var retryDelaySeconds = int.TryParse(settings[SettingKeys.Translation.RetryDelay], out var delaySeconds)
+                var retryDelaySeconds = settings.TryGetValue(SettingKeys.Translation.RetryDelay, out var delayStr)
+                    && int.TryParse(delayStr, out var delaySeconds)
                     ? delaySeconds
                     : 5;
 

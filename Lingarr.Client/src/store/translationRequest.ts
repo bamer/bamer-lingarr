@@ -73,6 +73,14 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
         setActiveTranslations(activeTranslations: IActiveTranslation[]) {
             this.activeTranslations = activeTranslations
         },
+        updateActiveProgress(progress: IRequestProgress) {
+            const active = this.activeTranslations.find(
+                (t) => t.id === progress.id
+            )
+            if (active) {
+                active.progress = progress.progress
+            }
+        },
         async fetchActiveTranslations() {
             this.activeTranslations =
                 await services.translationRequest.getActiveTranslations<IActiveTranslation[]>()
@@ -107,6 +115,14 @@ export const useTranslationRequestStore = defineStore('translateRequest', {
             this.proofreadSupported = status.supported
         },
         async updateProgress(requestProgress: IRequestProgress) {
+            const known = this.translationRequests.items.some(
+                (request: ITranslationRequest) => request.id === requestProgress.id
+            )
+            if (!known) {
+                // New request created by automation/webhook — refresh so it shows up
+                await this.fetch()
+                return
+            }
             this.translationRequests.items = this.translationRequests.items.map(
                 (request: ITranslationRequest) => {
                     if (request.id === requestProgress.id) {

@@ -10,7 +10,24 @@
                     <div class="md:hidden">
                         <MenuIcon class="block h-5 w-5 cursor-pointer" @click="isOpen = !isOpen" />
                     </div>
-                    <div class="flex items-center justify-between">
+
+                    <!-- Active Translation Progress -->
+                    <div
+                        v-if="currentTranslation"
+                        class="flex flex-1 items-center space-x-2 text-sm text-secondary-content">
+                        <span
+                            class="max-w-[300px] cursor-pointer truncate text-blue-400 hover:underline"
+                            :title="currentTranslation.title || ''"
+                            @click="goToTranslationDetail">
+                            {{ currentTranslation.title || 'Translating...' }}
+                        </span>
+                        <TranslationProgress class="w-32" :progress="currentTranslation.progress ?? 0" />
+                        <span class="min-w-[35px] text-right text-xs text-gray-400">
+                            {{ currentTranslation.progress ?? 0 }}%
+                        </span>
+                    </div>
+
+                    <div class="flex items-center justify-end">
                         <DropdownComponent width="medium">
                             <template #button>
                                 <ThemeIcon class="h-5 w-5" />
@@ -48,8 +65,9 @@
 
 <script setup lang="ts">
 import { ref, onMounted, computed, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useSignalR } from '@/composables/useSignalR'
-import { Hub, IActiveTranslation, ISettings, ITheme, THEMES } from '@/ts'
+import { Hub, IActiveTranslation, IRequestProgress, ISettings, ITheme, THEMES } from '@/ts'
 import { useSettingStore } from '@/store/setting'
 import { useInstanceStore } from '@/store/instance'
 import useTranslationRequestStore from '@/store/translationRequest'
@@ -58,7 +76,9 @@ import AsideNavigation from '@/components/layout/AsideNavigation.vue'
 import DropdownComponent from '@/components/common/DropdownComponent.vue'
 import ThemeIcon from '@/components/icons/ThemeIcon.vue'
 import MenuIcon from '@/components/icons/MenuIcon.vue'
+import TranslationProgress from '@/components/common/TranslationProgress.vue'
 
+const router = useRouter()
 const settingStore = useSettingStore()
 const instanceStore = useInstanceStore()
 const translationRequestStore = useTranslationRequestStore()
@@ -67,12 +87,27 @@ const themeDropdown = ref(false)
 const settingHubConnection = ref<Hub>()
 const requestHubConnection = ref<Hub>()
 
+const currentTranslation = computed(() => {
+    const translations = translationRequestStore.activeTranslations
+    return translations.find((t) => t.status === 'InProgress') ?? translations[0] ?? null
+})
+
+const goToTranslationDetail = () => {
+    if (currentTranslation.value) {
+        router.push({ name: 'translation-detail', params: { id: currentTranslation.value.id } })
+    }
+}
+
 const onSettingUpdate = (setting: { key: keyof ISettings; value: string }) => {
     settingStore.storeSetting(setting.key, setting.value)
 }
 
-const onActiveTranslations = (activeTranslations: IActiveTranslation[]) => {
-    translationRequestStore.setActiveTranslations(activeTranslations)
+const onActiveTranslations = (translations: IActiveTranslation[]) => {
+    translationRequestStore.setActiveTranslations(translations)
+}
+
+const onProgressUpdate = (progress: IRequestProgress) => {
+    translationRequestStore.updateActiveProgress(progress)
 }
 
 const setTheme = (theme: ITheme) => {
@@ -100,10 +135,12 @@ onMounted(async () => {
     )
     await requestHubConnection.value.joinGroup({ group: 'TranslationRequests' })
     requestHubConnection.value.on('ActiveTranslations', onActiveTranslations)
+    requestHubConnection.value.on('RequestProgress', onProgressUpdate)
 })
 
 onUnmounted(async () => {
     settingHubConnection.value?.off('SettingUpdate', onSettingUpdate)
     requestHubConnection.value?.off('ActiveTranslations', onActiveTranslations)
+    requestHubConnection.value?.off('RequestProgress', onProgressUpdate)
 })
 </script>

@@ -205,7 +205,7 @@ watch(
     { deep: true }
 )
 
-onMounted(() => {
+const setupEventSource = () => {
     eventSource = services.logs.getStream()
 
     eventSource.onmessage = (event) => {
@@ -232,23 +232,15 @@ onMounted(() => {
     }
 
     eventSource.onerror = (error) => {
-        console.error('EventSource error:', error)
-        logs.value.push({
-            logLevel: 'error',
-            message: `Log stream connection error. Attempting to reconnect in 5 seconds...`,
-            formattedTime: new Date().toTimeString().split(' ')[0],
-            formattedDate: new Date().toLocaleDateString(),
-            formattedSource: 'System',
-            category: 'System'
-        })
-        // reconnect
-        if (eventSource) {
-            eventSource.close()
-            setTimeout(() => {
-                eventSource = services.logs.getStream()
-            }, 5000)
-        }
+        // ponytail: never close() — closing kills the browser's native auto-reconnect
+        // (retry with backoff). Manual 5s/90min timers were why logs stayed dead after
+        // any transient drop. Slow server between updates is fine: SSE just stays idle.
+        console.warn('EventSource error, browser will auto-reconnect:', error)
     }
+}
+
+onMounted(() => {
+    setupEventSource()
 })
 
 onUnmounted(() => {

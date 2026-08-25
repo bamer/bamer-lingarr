@@ -328,19 +328,26 @@ public class SubtitleTranslationService
 
             if (newlyTranslated.Count > 0)
             {
-                var lineData = newlyTranslated.Select(subtitle =>
+                var successfulLines = newlyTranslated
+                    .Where(s => !failedPositions.Contains(s.Position))
+                    .ToList();
+
+                if (successfulLines.Count > 0)
                 {
-                    _translationByPosition.TryGetValue(subtitle.Position, out var entry);
-                    return new TranslatedLineData
+                    var lineData = successfulLines.Select(subtitle =>
                     {
-                        Position = subtitle.Position,
-                        Source = string.Join(" ", stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines),
-                        Target = string.Join(" ", subtitle.TranslatedLines),
-                        Service = entry.Service,
-                        Pair = entry.Pair
-                    };
-                }).ToList();
-                await _progressService!.EmitLines(translationRequest, lineData);
+                        _translationByPosition.TryGetValue(subtitle.Position, out var entry);
+                        return new TranslatedLineData
+                        {
+                            Position = subtitle.Position,
+                            Source = string.Join(" ", stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines),
+                            Target = string.Join(" ", subtitle.TranslatedLines),
+                            Service = entry.Service,
+                            Pair = entry.Pair
+                        };
+                    }).ToList();
+                    await _progressService!.EmitLines(translationRequest, lineData);
+                }
             }
 
             if (failedPositions.Count > 0 && maxRetries > 0)

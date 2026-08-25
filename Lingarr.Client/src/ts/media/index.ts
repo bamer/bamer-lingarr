@@ -109,9 +109,12 @@ export type ProofreadLineOrigin =
     (typeof PROOFREAD_LINE_ORIGIN)[keyof typeof PROOFREAD_LINE_ORIGIN]
 
 export interface IActiveTranslation {
+    id: number
     mediaId: number | null
     mediaType: MediaType
     status: TranslationStatus
+    title?: string | null
+    progress?: number
 }
 
 export interface IRequestProgress {

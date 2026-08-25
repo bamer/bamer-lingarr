@@ -8,7 +8,10 @@ namespace Lingarr.Server.Models.TranslationRequests;
 /// </summary>
 public class ActiveTranslation
 {
+    public int Id { get; set; }
     public int? MediaId { get; set; }
     public required MediaType MediaType { get; set; }
     public required TranslationStatus Status { get; set; }
+    public string? Title { get; set; }
+    public int Progress { get; set; }
 }

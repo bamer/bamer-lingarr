@@ -33,15 +33,22 @@ namespace Lingarr.Server.Providers
 
         [JsonPropertyName("formattedSource")]
         public string FormattedSource => Category?.Split('.').LastOrDefault() ?? Category ?? string.Empty;
+
+        // Monotonic sequence so stream consumers can detect new entries even when
+        // the bounded queue is full and Count no longer changes
+        [JsonPropertyName("seq")]
+        public long Seq { get; set; }
     }
 
     public static class InMemoryLogSink
     {
         private static readonly ConcurrentQueue<LogEntry> Logs = new();
         private static readonly int MaxLogCount = 1000;
+        private static long _seq;
 
         public static void AddLog(LogEntry logEntry)
         {
+            logEntry.Seq = Interlocked.Increment(ref _seq);
             Logs.Enqueue(logEntry);
 
             // Trim logs if we exceed the maximum count and only keep logs for 24h

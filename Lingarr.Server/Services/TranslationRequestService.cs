@@ -313,9 +313,11 @@ public class TranslationRequestService : ITranslationRequestService
                 translationRequest.Status == TranslationStatus.InProgress)
             .Select(translationRequest => new ActiveTranslation
             {
+                Id = translationRequest.Id,
                 MediaId = translationRequest.MediaId,
                 MediaType = translationRequest.MediaType,
-                Status = translationRequest.Status
+                Status = translationRequest.Status,
+                Title = translationRequest.Title
             })
             .ToListAsync();
     }
