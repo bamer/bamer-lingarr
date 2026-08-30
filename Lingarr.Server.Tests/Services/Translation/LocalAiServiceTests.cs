@@ -112,7 +112,7 @@ public class LocalAiServiceTests
         Assert.Equal(2, result.Count);
         Assert.Equal("Mundo", result[2]);
         VerifyRequestsSent(3);
-        VerifyWarningLogged("returned an unparsable response", Times.Once());
+        VerifyWarningLogged("returned an unparsable response", Times.Exactly(2));
     }
 
     [Fact]
@@ -135,6 +135,94 @@ public class LocalAiServiceTests
         VerifyRequestsSent(1);
     }
 
+    [Fact]
+    public async Task TranslateBatchAsync_ShouldRetry_WhenChatApiReturnsServiceUnavailable()
+    {
+        // Arrange
+        UseSettings(ChatEndpoint);
+        SetupResponseSequence(ServiceUnavailable(), ServiceUnavailable(), ChatResponse(ValidJson));
+
+        // Act
+        var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, result.Count);
+        VerifyRequestsSent(3);
+        VerifyWarningLogged("received ServiceUnavailable", Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ShouldThrow_WhenChatApiKeepsReturningServiceUnavailable()
+    {
+        // Arrange
+        UseSettings(ChatEndpoint);
+        SetupResponse(() => ServiceUnavailable());
+
+        // Act
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
+
+        // Assert
+        Assert.Contains("Retry limit reached after ServiceUnavailable", exception.Message);
+        Assert.IsType<HttpRequestException>(exception.InnerException);
+        VerifyRequestsSent(3); // MaxRetries
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ShouldNotFallBackToJsonParsing_WhenStructuredOutputFailsWithServiceUnavailable()
+    {
+        // Arrange
+        UseSettings(ChatEndpoint, structuredOutput: true);
+        SetupResponse(() => ServiceUnavailable());
+
+        // Act
+        var exception = await Assert.ThrowsAsync<TranslationException>(
+            () => _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None));
+
+        // Assert — each attempt must stay on the structured output path instead of
+        // immediately firing a fallback request at the overloaded backend.
+        Assert.Contains("Retry limit reached after ServiceUnavailable", exception.Message);
+        VerifyRequestsSent(3); // MaxRetries, one request per attempt
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ShouldFallBackToJsonParsing_WhenStructuredOutputFailsWithClientError()
+    {
+        // Arrange — a 400 means the backend does not support structured output, so the
+        // JSON parsing fallback is still expected to kick in.
+        UseSettings(ChatEndpoint, structuredOutput: true);
+        SetupResponseSequence(BadRequest(), ChatResponse(ValidJson));
+
+        // Act
+        var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, result.Count);
+        VerifyRequestsSent(2);
+    }
+
+    [Fact]
+    public async Task TranslateBatchAsync_ShouldRetry_WhenRequestTimesOut()
+    {
+        // Arrange
+        UseSettings(ChatEndpoint);
+        _httpMessageHandlerMock.Protected()
+            .SetupSequence<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(Task.FromException<HttpResponseMessage>(new TaskCanceledException()))
+            .ReturnsAsync(ChatResponse(ValidJson));
+
+        // Act
+        var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
+
+        // Assert
+        Assert.Equal(2, result.Count);
+        VerifyRequestsSent(2);
+        VerifyWarningLogged("request timed out", Times.Once());
+    }
+
     private static List<BatchSubtitleItem> Batch() =>
     [
         new() { Position = 1, Line = "Hello" },
@@ -147,13 +235,25 @@ public class LocalAiServiceTests
     private static HttpResponseMessage ChatResponse(string translatedJson) =>
         JsonResponse(new { choices = new[] { new { message = new { content = translatedJson } } } });
 
+    private static HttpResponseMessage ServiceUnavailable() => new()
+    {
+        StatusCode = HttpStatusCode.ServiceUnavailable,
+        Content = new StringContent("Service Unavailable", Encoding.UTF8, "text/plain")
+    };
+
+    private static HttpResponseMessage BadRequest() => new()
+    {
+        StatusCode = HttpStatusCode.BadRequest,
+        Content = new StringContent("{\"error\":\"structured output not supported\"}", Encoding.UTF8, "application/json")
+    };
+
     private static HttpResponseMessage JsonResponse(object body) => new()
     {
         StatusCode = HttpStatusCode.OK,
         Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
     };
 
-    private void UseSettings(string endpoint)
+    private void UseSettings(string endpoint, bool structuredOutput = false)
     {
         var settings = new Dictionary<string, string>
         {
@@ -167,7 +267,8 @@ public class LocalAiServiceTests
             { SettingKeys.Translation.MaxRetries, "3" },
             { SettingKeys.Translation.RetryDelay, "0" }, // No delay to keep the tests fast
             { SettingKeys.Translation.RetryDelayMultiplier, "1" },
-            { SettingKeys.Translation.LanguageCodeFormat, "false" }
+            { SettingKeys.Translation.LanguageCodeFormat, "false" },
+            { SettingKeys.Translation.ModelStructuredOutput, structuredOutput ? "true" : "false" }
         };
 
         _settingsMock.Setup(settingService => settingService.GetSettings(It.IsAny<IEnumerable<string>>()))

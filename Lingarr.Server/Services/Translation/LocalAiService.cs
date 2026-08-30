@@ -188,7 +188,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         {
             try
             {
-                return await CompleteWithLocalAiApi(replacements, retry.Token);
+                return await CompleteWithLocalAiApi(replacements, linked.Token);
             }
             catch (TranslationResponseException ex)
             {
@@ -204,6 +204,38 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 _logger.LogWarning(
                     "429 Too Many Requests. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
                     delay, attempt, _maxRetries);
+            }
+            catch (HttpRequestException ex) when (IsTransientFailure(ex.StatusCode))
+            {
+                if (attempt == _maxRetries)
+                {
+                    _logger.LogError(ex, "Max retries exhausted ({StatusCode}) for text: {Text}", ex.StatusCode, text);
+                    throw new TranslationException(
+                        $"Retry limit reached after {ex.StatusCode?.ToString() ?? "a transport error"}.", ex);
+                }
+
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+
+                _logger.LogWarning(
+                    "{ServiceName} received {StatusCode}. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", ex.StatusCode, delay, attempt, _maxRetries);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The request exceeded the configured timeout while the backend was busy — retryable
+                if (attempt == _maxRetries)
+                {
+                    _logger.LogError(ex, "Max retries exhausted after request timeout for text: {Text}", text);
+                    throw new TranslationException("Retry limit reached after request timeout.", ex);
+                }
+
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+
+                _logger.LogWarning(
+                    "{ServiceName} request timed out. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", delay, attempt, _maxRetries);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -254,6 +286,38 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 _logger.LogWarning(
                     "429 Too Many Requests. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
                     delay, attempt, _maxRetries);
+            }
+            catch (HttpRequestException ex) when (IsTransientFailure(ex.StatusCode))
+            {
+                if (attempt == _maxRetries)
+                {
+                    _logger.LogError(ex, "Max retries exhausted ({StatusCode}) during proofread", ex.StatusCode);
+                    throw new TranslationException(
+                        $"Retry limit reached after {ex.StatusCode?.ToString() ?? "a transport error"}.", ex);
+                }
+
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+
+                _logger.LogWarning(
+                    "{ServiceName} received {StatusCode}. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", ex.StatusCode, delay, attempt, _maxRetries);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The request exceeded the configured timeout while the backend was busy — retryable
+                if (attempt == _maxRetries)
+                {
+                    _logger.LogError(ex, "Max retries exhausted after request timeout during proofread");
+                    throw new TranslationException("Retry limit reached after request timeout.", ex);
+                }
+
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+
+                _logger.LogWarning(
+                    "{ServiceName} request timed out. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", delay, attempt, _maxRetries);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -307,12 +371,13 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             {
                 return await TranslateBatchWithLocalAiApi(subtitleBatch, linked.Token);
             }
-            catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            catch (HttpRequestException ex) when (IsTransientFailure(ex.StatusCode))
             {
                 if (attempt == _maxRetries)
                 {
                     _logger.LogError(ex, "Max retries exhausted ({StatusCode}) for batch translation", ex.StatusCode);
-                    throw new TranslationException($"Retry limit reached after {ex.StatusCode}.", ex);
+                    throw new TranslationException(
+                        $"Retry limit reached after {ex.StatusCode?.ToString() ?? "a transport error"}.", ex);
                 }
 
                 await Task.Delay(delay, linked.Token).ConfigureAwait(false);
@@ -336,6 +401,22 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
                 await Task.Delay(delay, linked.Token).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+            }
+            catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The request exceeded the configured timeout while the backend was busy — retryable
+                if (attempt == _maxRetries)
+                {
+                    _logger.LogError(ex, "Max retries exhausted after request timeout for batch translation");
+                    throw new TranslationException("Retry limit reached after request timeout.", ex);
+                }
+
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
+
+                _logger.LogWarning(
+                    "{ServiceName} request timed out. Retrying in {Delay}... (Attempt {Attempt}/{MaxRetries})",
+                    "LocalAI", delay, attempt, _maxRetries);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -366,6 +447,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             try
             {
                 return await TranslateBatchWithStructuredOutput(subtitleBatch, cancellationToken);
+            }
+            catch (HttpRequestException ex) when (IsTransientFailure(ex.StatusCode))
+            {
+                // The backend is temporarily unavailable/overloaded — bubble up so the retry
+                // loop can back off instead of immediately hammering it with a fallback request.
+                throw;
             }
             catch (Exception ex)
             {
@@ -441,13 +528,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var response = await _httpClient.PostAsync(_endpoint, requestContent, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI structured output batch request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, 
-                responseContent);
-            throw new TranslationException(
-                $"LocalAI structured output batch request failed with status {response.StatusCode}: {responseContent}");
+            await ThrowOnUnsuccessfulResponse(response, "structured output batch", cancellationToken);
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -529,13 +610,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var response = await _httpClient.PostAsync(_endpoint, requestContent, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI JSON parsing batch request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, 
-                responseContent);
-            throw new TranslationException(
-                $"LocalAI JSON parsing batch request failed with status {response.StatusCode}: {responseContent}");
+            await ThrowOnUnsuccessfulResponse(response, "JSON parsing batch", cancellationToken);
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -543,7 +618,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
         if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
         {
-            throw new TranslationException("No completion choices returned from LocalAI");
+            // Model glitch, not a configuration problem — the retry loop treats this as retryable
+            throw new TranslationParseException("No completion choices returned from LocalAI");
         }
 
         // Try to extract JSON — strip markdown fences, then locate array
@@ -612,12 +688,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI generate API batch request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, responseContent);
-            throw new TranslationException(
-                $"LocalAI generate API batch request failed with status {response.StatusCode}: {responseContent}");
+            await ThrowOnUnsuccessfulResponse(response, "generate API batch", cancellationToken);
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -685,12 +756,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var response = await _httpClient.PostAsync(_endpoint, content, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI generate API request failed with status {StatusCode}: {ResponseContent}",
-                response.StatusCode, responseContent);
-            throw new TranslationException(
-                $"LocalAI generate API request failed with status {response.StatusCode}: {responseContent}");
+            await ThrowOnUnsuccessfulResponse(response, "generate API", cancellationToken);
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -721,14 +787,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
         if (!response.IsSuccessStatusCode)
         {
-            var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
-            _logger.LogError(
-                "LocalAI chat API request to {Endpoint} failed with status {StatusCode}: {ResponseContent}",
-                _endpoint, 
-                response.StatusCode, 
-                responseContent);
-            throw new TranslationResponseException(
-                $"LocalAI chat API request failed with status {response.StatusCode}: {responseContent}");
+            await ThrowOnUnsuccessfulResponse(response, "chat API", cancellationToken);
         }
 
         var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -740,6 +799,36 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         }
 
         return chatResponse.Choices[0].Message.Content;
+    }
+
+    /// <summary>
+    /// Transient backend conditions worth retrying: rate limiting (429), server-side
+    /// errors (5xx) and transport-level failures without a status code such as a
+    /// connection refused/reset while the local backend is starting up or restarting.
+    /// </summary>
+    private static bool IsTransientFailure(HttpStatusCode? statusCode) =>
+        statusCode is null
+        || statusCode == HttpStatusCode.TooManyRequests
+        || (int)statusCode >= 500;
+
+    /// <summary>
+    /// Logs and throws an HttpRequestException that carries the response status code, so
+    /// the retry loop can distinguish transient backend errors (429/5xx) from permanent
+    /// failures (400/401/...), which should fail fast without retrying.
+    /// </summary>
+    private async Task ThrowOnUnsuccessfulResponse(
+        HttpResponseMessage response,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        var responseContent = await response.Content.ReadAsStringAsync(cancellationToken);
+        _logger.LogError(
+            "LocalAI {Operation} request to {Endpoint} failed with status {StatusCode}: {ResponseContent}",
+            operation, _endpoint, response.StatusCode, responseContent);
+        throw new HttpRequestException(
+            $"LocalAI {operation} request failed with status {response.StatusCode}: {responseContent}",
+            inner: null,
+            statusCode: response.StatusCode);
     }
 
     /// <summary>
