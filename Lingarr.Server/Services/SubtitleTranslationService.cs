@@ -500,6 +500,9 @@ public class SubtitleTranslationService
             if (!batchResults.TryGetValue(subtitle.Position, out var translated))
             {
                 failedPositions.Add(subtitle.Position);
+                // Fallback to original lines so the subtitle file remains valid; the position
+                // is still tracked as failed for Partial status and retry handling.
+                subtitle.TranslatedLines = contentLines;
                 continue;
             }
 

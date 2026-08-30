@@ -55,13 +55,14 @@ public class LanguageHandlingTests : MediaSubtitleProcessorTestBase
             s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()),
             Times.Never);
 
-        // Assert - Hash should be persisted so subsequent runs short-circuit
-        Assert.NotNull(movie.MediaHash);
+        // Hash is intentionally not persisted when no translation is needed to avoid stale-hash
+        // skipping media that later becomes translatable.
+        Assert.Null(movie.MediaHash);
 
-        // Act - Second call should short-circuit via hash match at ProcessMedia line 64
+        // Act - Second call should still return false (re-evaluated, not short-circuited via hash)
         var secondResult = await Processor.ProcessMedia(movie, MediaType.Movie);
 
-        // Assert - Still false, and the subtitle processing logic was never reached again
+        // Assert - Still false and no request created
         Assert.False(secondResult);
         TranslationRequestServiceMock.Verify(
             s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()),

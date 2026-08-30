@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.11.0] - 2026-08-31
+
+### Fixed
+- **Failing tests** — Fixed `ProcessSubtitleBatch_MissingTranslation` to fallback to original lines while tracking `FailedPositions` (215/215 Server.Tests now pass) and updated `ProcessMedia_AllTargetLanguagesExist` to reflect stale-hash fix (hash not persisted when nothing to translate).
+
 ## [2.10.0] - 2026-08-31
 
 ### Fixed
