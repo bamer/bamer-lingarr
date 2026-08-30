@@ -23,7 +23,7 @@
             :label="field.label"
             :placeholder="field.default ?? ''"
             :validation-type="validationType"
-            :min-length="field.minLength ?? undefined"
+            :min-length="field.minLength ?? (field.required ? 1 : undefined)"
             :error-message="field.validationErrorMessage ?? undefined"
             @update:validation="(value: boolean) => (isValid = value)" />
         <div v-if="field.description" class="mt-1 text-xs opacity-60">
@@ -58,25 +58,20 @@ const emit = defineEmits(['save'])
 
 const settingsStore = useSettingStore()
 
-const isValid = ref<boolean>(
-    props.field.minLength == null && props.field.type !== PLUGIN_SETTING_TYPE.URL
-)
-
 const remoteOptions = ref<LabelValue[]>([])
 const remoteError = ref<string | null>(null)
 const remoteSelect = ref<SelectComponentExpose | null>(null)
 
-const validationType = computed<InputValidationType | undefined>(() => {
+const validationType = computed<InputValidationType>(() => {
     if (props.field.type === PLUGIN_SETTING_TYPE.URL) {
         return INPUT_VALIDATION_TYPE.URL
     }
     if (props.field.type === PLUGIN_SETTING_TYPE.NUMBER) {
         return INPUT_VALIDATION_TYPE.NUMBER
     }
-    if (props.field.minLength != null) {
-        return INPUT_VALIDATION_TYPE.STRING
-    }
-    return undefined
+    // Text and secret fields get plain string validation so every field provides
+    // the same green check feedback and save behavior as validated fields.
+    return INPUT_VALIDATION_TYPE.STRING
 })
 
 const fieldValue = computed<string>({
@@ -115,6 +110,13 @@ const fieldValue = computed<string>({
         }
     }
 })
+
+// URL fields start unvalidated until the input passes URL validation; other fields
+// are valid as long as a required value is present (validation re-runs on every input).
+const isValid = ref<boolean>(
+    props.field.type !== PLUGIN_SETTING_TYPE.URL &&
+        (!props.field.required || fieldValue.value.length > 0)
+)
 
 async function loadRemoteOptions(): Promise<void> {
     if (!props.field.optionsEndpoint) {

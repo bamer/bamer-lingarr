@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.10.0] - 2026-08-31
+
+### Fixed
+- **LocalAI batch translation dying on transient backend errors** — A `503 ServiceUnavailable` (or timeout) from the local AI backend was converted to a non-retryable `TranslationException`, hit the catch-all, and killed the whole translation job with "All configured batch translation services failed" — no retries, nothing sent until manual resume. All request paths (structured output, JSON parsing, generate, chat) now throw `HttpRequestException` carrying the status code so the retry loop handles them with exponential backoff.
+- **Retries now cover all transient failures** — Retry filter broadened from 429/503 only to 429, all 5xx (500/502/503/504) and transport-level errors (connection refused/reset). Request timeouts (`TaskCanceledException`) are retried instead of being treated as fatal. Permanent errors (400/401/...) still fail fast on the first attempt.
+- **Structured output fallback hammering an overloaded backend** — A transient 503 on the structured-output attempt was swallowed and immediately replaced with a JSON-parsing request at the already-busy backend. Transient errors now bubble up to the retry loop; the fallback only kicks in for genuine "not supported" responses (4xx).
+- **Empty model responses now retryable** — "No completion choices returned from LocalAI" is a model glitch and is retried (`TranslationParseException`) instead of aborting the job.
+- **Settings save feedback inconsistent for text fields** — In the provider credentials form (Settings → Services), plain text fields like "AI Model" showed no green check icon and used a separate save branch, unlike validated fields (Address, numbers). All text/secret fields now use the same string validation (required fields must be non-empty), giving identical green-check feedback and save behavior. Verified via live test that changed LocalAI address/model apply to the next request without a restart.
+
 ## [2.9.0] - 2026-08-25
 
 ### Added
