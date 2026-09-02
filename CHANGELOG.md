@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.17.0] - 2026-08-31
+
+### Fixed
+- **Settings hot-reload** — Removed `_initialized` cache flag and `SemaphoreSlim` lock from `LocalAiService`. Model, endpoint, batch size, and all other settings are now read fresh on every translation request. No more Docker restart needed after changing settings.
+
 ## [2.16.0] - 2026-08-31
 
 ### Fixed

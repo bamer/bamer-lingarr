@@ -25,8 +25,6 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     private string? _generateRequestTemplate;
     private bool _isChatEndpoint;
     private bool _useStructuredOutput;
-    private bool _initialized;
-    private readonly SemaphoreSlim _initLock = new(1, 1);
     private Dictionary<string, object?> _modelOptions = new();
 
     /// <inheritdoc />
@@ -59,36 +57,30 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
     private async Task InitializeAsync(string sourceLanguage, string targetLanguage)
     {
-        if (_initialized) return;
-
-        await _initLock.WaitAsync();
-        try
-        {
-            if (_initialized) return;
-
-            var settings = await _settings.GetSettings([
-                SettingKeys.Translation.LocalAi.Model,
-                SettingKeys.Translation.LocalAi.Endpoint,
-                SettingKeys.Translation.LocalAi.ChatRequestTemplate,
-                SettingKeys.Translation.LocalAi.GenerateRequestTemplate,
-                SettingKeys.Translation.AiPrompt,
-                SettingKeys.Translation.AiUserPrompt,
-                SettingKeys.Translation.ProofreadPrompt,
-                SettingKeys.Translation.ProofreadUserPrompt,
-                SettingKeys.Translation.RequestTimeout,
-                SettingKeys.Translation.MaxRetries,
-                SettingKeys.Translation.RetryDelay,
-                SettingKeys.Translation.RetryDelayMultiplier,
-                SettingKeys.Translation.LanguageCodeFormat,
-                SettingKeys.Translation.ModelTemperature,
-                SettingKeys.Translation.ModelTopP,
-                SettingKeys.Translation.ModelMaxTokens,
-                SettingKeys.Translation.ModelReasoningBudget,
-                SettingKeys.Translation.ModelChatTemplateKwargs,
-                SettingKeys.Translation.ModelReasoningEffort,
-                SettingKeys.Translation.ModelStructuredOutput
-            ]);
-            _model = settings[SettingKeys.Translation.LocalAi.Model];
+        // Always read fresh settings — no caching, each request gets current config
+        var settings = await _settings.GetSettings([
+            SettingKeys.Translation.LocalAi.Model,
+            SettingKeys.Translation.LocalAi.Endpoint,
+            SettingKeys.Translation.LocalAi.ChatRequestTemplate,
+            SettingKeys.Translation.LocalAi.GenerateRequestTemplate,
+            SettingKeys.Translation.AiPrompt,
+            SettingKeys.Translation.AiUserPrompt,
+            SettingKeys.Translation.ProofreadPrompt,
+            SettingKeys.Translation.ProofreadUserPrompt,
+            SettingKeys.Translation.RequestTimeout,
+            SettingKeys.Translation.MaxRetries,
+            SettingKeys.Translation.RetryDelay,
+            SettingKeys.Translation.RetryDelayMultiplier,
+            SettingKeys.Translation.LanguageCodeFormat,
+            SettingKeys.Translation.ModelTemperature,
+            SettingKeys.Translation.ModelTopP,
+            SettingKeys.Translation.ModelMaxTokens,
+            SettingKeys.Translation.ModelReasoningBudget,
+            SettingKeys.Translation.ModelChatTemplateKwargs,
+            SettingKeys.Translation.ModelReasoningEffort,
+            SettingKeys.Translation.ModelStructuredOutput
+        ]);
+        _model = settings[SettingKeys.Translation.LocalAi.Model];
             _endpoint = settings[SettingKeys.Translation.LocalAi.Endpoint];
             _chatRequestTemplate = !string.IsNullOrEmpty(settings[SettingKeys.Translation.LocalAi.ChatRequestTemplate])
                 ? settings[SettingKeys.Translation.LocalAi.ChatRequestTemplate]
@@ -160,13 +152,6 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             if (settings.TryGetValue(SettingKeys.Translation.ModelReasoningEffort, out var effortStr) &&
                 !string.IsNullOrWhiteSpace(effortStr))
                 _modelOptions["reasoning_effort"] = effortStr;
-
-            _initialized = true;
-        }
-        finally
-        {
-            _initLock.Release();
-        }
     }
 
     /// <inheritdoc />
