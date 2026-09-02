@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.12.0] - 2026-08-31
+
+### Fixed
+- **Malformed JSON from translation models** — Models that output truncated or malformed JSON (missing `[`, extra `]`, truncated arrays) now get automatically repaired before parsing. Handles: missing opening bracket, missing closing bracket, truncated objects, extra trailing brackets.
+
 ## [2.11.0] - 2026-08-31
 
 ### Fixed

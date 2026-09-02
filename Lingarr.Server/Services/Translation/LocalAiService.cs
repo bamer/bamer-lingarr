@@ -630,22 +630,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
         _logger.LogDebug("Raw model JSON-parsing response: {Response}", translatedJson);
 
-        var jsonStart = translatedJson.IndexOf('[');
-        var jsonEnd = translatedJson.LastIndexOf(']');
-        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart)
-        {
-            translatedJson = translatedJson.Substring(jsonStart, jsonEnd - jsonStart + 1);
-        }
-
-        translatedJson = translatedJson.Trim();
-        if (string.IsNullOrEmpty(translatedJson) || translatedJson[0] != '[')
-        {
-            _logger.LogError(
-                "Model did not return a JSON array. First 200 chars: {Preview}",
-                translatedJson[..Math.Min(200, translatedJson.Length)]);
-            throw new TranslationException(
-                $"Model did not return a JSON array. Starts with: '{translatedJson[..Math.Min(80, translatedJson.Length)]}'");
-        }
+        translatedJson = RepairTruncatedJson(translatedJson);
 
         try
         {
@@ -829,6 +814,96 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             $"LocalAI {operation} request failed with status {response.StatusCode}: {responseContent}",
             inner: null,
             statusCode: response.StatusCode);
+    }
+
+    /// <summary>
+    /// <summary>
+    /// Attempts to repair truncated/malformed JSON from model output.
+    /// Handles: missing opening [, extra ], truncated arrays, missing closing ].
+    /// </summary>
+    private string RepairTruncatedJson(string json)
+    {
+        json = json.Trim();
+
+        // Extract between first [ and last ] if present
+        var jsonStart = json.IndexOf('[');
+        var jsonEnd = json.LastIndexOf(']');
+        if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart)
+        {
+            json = json.Substring(jsonStart, jsonEnd - jsonStart + 1);
+        }
+
+        // Try parse as-is first
+        try
+        {
+            JsonSerializer.Deserialize<List<StructuredBatchResponse>>(json,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            return json;
+        }
+        catch (JsonException) { }
+
+        // If starts with [ but fails, it might be truncated — find last complete object
+        if (json.StartsWith('['))
+        {
+            var lastBrace = json.LastIndexOf('}');
+            if (lastBrace != -1 && lastBrace < json.Length - 1)
+            {
+                // Has content after last }, try truncating there + closing array
+                var candidate = json.Substring(0, lastBrace + 1) + "]";
+                try
+                {
+                    JsonSerializer.Deserialize<List<StructuredBatchResponse>>(candidate,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    return candidate;
+                }
+                catch (JsonException) { }
+            }
+            else if (lastBrace != -1)
+            {
+                // Ends with }, missing ]
+                var candidate = json + "]";
+                try
+                {
+                    JsonSerializer.Deserialize<List<StructuredBatchResponse>>(candidate,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    return candidate;
+                }
+                catch (JsonException) { }
+            }
+        }
+
+        // No [ found — find first { and wrap in array
+        var firstBrace = json.IndexOf('{');
+        if (firstBrace != -1)
+        {
+            var candidate = "[" + json.Substring(firstBrace);
+            if (!candidate.EndsWith(']')) candidate += "]";
+            try
+            {
+                JsonSerializer.Deserialize<List<StructuredBatchResponse>>(candidate,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return candidate;
+            }
+            catch (JsonException) { }
+
+            // Also try truncating to last }
+            var lastBraceInCandidate = candidate.LastIndexOf('}');
+            if (lastBraceInCandidate != -1)
+            {
+                candidate = candidate.Substring(0, lastBraceInCandidate + 1) + "]";
+                try
+                {
+                    JsonSerializer.Deserialize<List<StructuredBatchResponse>>(candidate,
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    return candidate;
+                }
+                catch (JsonException) { }
+            }
+        }
+
+        // If we get here, repair failed — return original and let caller handle the error
+        _logger.LogWarning("JSON repair attempts failed for model output");
+        return json;
     }
 
     /// <summary>
