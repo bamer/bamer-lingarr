@@ -172,6 +172,13 @@ public class TranslationJob
             var translator = new SubtitleTranslationService(services, _logger, _progressService);
             var subtitles = await _subtitleService.ReadSubtitles(request.SubtitleToTranslate);
 
+            // Store total line count for progress calculation
+            if (request.TotalLines == 0 && subtitles.Count > 0)
+            {
+                request.TotalLines = subtitles.Count;
+                await _dbContext.SaveChangesAsync(cancellationToken);
+            }
+
             // subtitle already carries a translation from an earlier prior run.
             // Group by Position and keep the most recent row in case the same position was used more than once.
             var persistedLines = (await _dbContext.TranslationRequestLines

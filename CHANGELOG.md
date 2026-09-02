@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.13.0] - 2026-08-31
+
+### Added
+- **Progress bar for each translation task in data table** — Progress is now calculated from persisted `TranslationRequestLines` count in the database, so it's visible on page load and survives refreshes. No more relying solely on real-time SignalR events. Stored `TotalLines` on each request when translation starts.
+
+### Fixed
+- **Malformed JSON from translation models** — Models that output truncated or malformed JSON (missing `[`, extra `]`, truncated arrays) now get automatically repaired before parsing.
+
 ## [2.12.0] - 2026-08-31
 
 ### Fixed

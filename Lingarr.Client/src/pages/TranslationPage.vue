@@ -138,12 +138,12 @@
                     class="items-center md:flex md:px-4 md:py-2"
                     :class="[
                         isSelectMode ? 'md:col-span-2' : 'md:col-span-3',
-                        item.status === TRANSLATION_STATUS.INPROGRESS && item.progress != null
+                        item.status === TRANSLATION_STATUS.INPROGRESS
                             ? 'flex w-full md:w-auto'
                             : 'hidden'
                     ]">
                     <div
-                        v-if="item.status === TRANSLATION_STATUS.INPROGRESS && item.progress != null"
+                        v-if="item.status === TRANSLATION_STATUS.INPROGRESS"
                         class="w-full">
                         <TranslationProgress :progress="item.progress" />
                     </div>

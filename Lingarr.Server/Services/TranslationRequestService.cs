@@ -769,6 +769,30 @@ public class TranslationRequestService : ITranslationRequestService
             .Take(pageSize)
             .ToListAsync();
 
+        // Calculate progress from persisted TranslationRequestLines count
+        var requestIds = requests.Select(r => r.Id).ToList();
+        var lineCounts = await _dbContext.TranslationRequestLines
+            .Where(line => requestIds.Contains(line.TranslationRequestId))
+            .GroupBy(line => line.TranslationRequestId)
+            .Select(g => new { RequestId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.RequestId, x => x.Count);
+
+        foreach (var request in requests)
+        {
+            if (request.Status == TranslationStatus.Completed)
+            {
+                request.Progress = 100;
+            }
+            else if (request.TotalLines > 0 && lineCounts.TryGetValue(request.Id, out var translatedCount))
+            {
+                request.Progress = Math.Min(100, translatedCount * 100 / request.TotalLines);
+            }
+            else
+            {
+                request.Progress = 0;
+            }
+        }
+
         return new PagedResult<TranslationRequest>
         {
             Items = requests,
