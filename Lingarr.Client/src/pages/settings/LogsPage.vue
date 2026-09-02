@@ -60,7 +60,7 @@
                 <div
                     class="hover:bg-secondary/20 border-secondary/30 grid grid-cols-12 border-b py-2 transition-colors">
                     <div class="col-span-1 px-4 text-gray-400">
-                        {{ log.formattedTime }}
+                        {{ formatLocalTime(log.formattedTime) }}
                     </div>
                     <div class="col-span-1 px-4">
                         <span
@@ -124,6 +124,19 @@ const filteredLogs = computed(() => {
     })
 })
 
+const formatLocalTime = (utcTime: string): string => {
+    // Parse UTC time and convert to local
+    const [hours, minutes, seconds] = utcTime.split(':').map(Number)
+    const now = new Date()
+    now.setUTCHours(hours, minutes, seconds, 0)
+    return now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+}
+
+const formatLocalDate = (utcDate: string): string => {
+    const date = new Date(utcDate + 'T00:00:00Z')
+    return date.toLocaleDateString('fr-FR')
+}
+
 const formatLogMessage = (message: string): string => {
     // Replace color tags
     let formattedMessage = message
@@ -176,7 +189,7 @@ const exportLogs = () => {
     exportContent += `${'='.repeat(80)}\n\n`
 
     filteredLogs.value.forEach((log) => {
-        exportContent += `[${log.formattedDate} ${log.formattedTime}] [${log.logLevel}] [${log.category}] ${log.message}\n`
+        exportContent += `[${formatLocalDate(log.formattedDate)} ${formatLocalTime(log.formattedTime)}] [${log.logLevel}] [${log.category}] ${log.message}\n`
 
         // Include stack trace
         if (log.stackTrace) {

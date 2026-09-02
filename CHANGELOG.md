@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.14.0] - 2026-08-31
+
+### Fixed
+- **Log timestamps now display in local time** — UTC timestamps are converted to the user's local timezone with French formatting (HH:mm:ss).
+- **Header progress bar shows correct title and progress** — Active translations endpoint now calculates progress from persisted lines.
+- **Progress bar for resumed/partially-translated tasks** — Data table now shows progress bar for `Pending` requests that already have translated lines (e.g., after resume).
+
 ## [2.13.0] - 2026-08-31
 
 ### Added

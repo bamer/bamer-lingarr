@@ -305,21 +305,53 @@ public class TranslationRequestService : ITranslationRequestService
     }
 
     /// <inheritdoc />
-    public Task<List<ActiveTranslation>> GetActiveTranslations()
+    public async Task<List<ActiveTranslation>> GetActiveTranslations()
     {
-        return _dbContext.TranslationRequests
+        var activeRequests = await _dbContext.TranslationRequests
             .Where(translationRequest =>
                 translationRequest.Status == TranslationStatus.Pending ||
                 translationRequest.Status == TranslationStatus.InProgress)
-            .Select(translationRequest => new ActiveTranslation
+            .ToListAsync();
+
+        if (activeRequests.Count == 0)
+        {
+            return [];
+        }
+
+        var requestIds = activeRequests.Select(r => r.Id).ToList();
+        var lineCounts = await _dbContext.TranslationRequestLines
+            .Where(line => requestIds.Contains(line.TranslationRequestId))
+            .GroupBy(line => line.TranslationRequestId)
+            .Select(g => new { RequestId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.RequestId, x => x.Count);
+
+        return activeRequests.Select(translationRequest =>
+        {
+            int progress;
+            if (translationRequest.Status == TranslationStatus.Completed)
+            {
+                progress = 100;
+            }
+            else if (translationRequest.TotalLines > 0 &&
+                     lineCounts.TryGetValue(translationRequest.Id, out var translatedCount))
+            {
+                progress = Math.Min(100, translatedCount * 100 / translationRequest.TotalLines);
+            }
+            else
+            {
+                progress = 0;
+            }
+
+            return new ActiveTranslation
             {
                 Id = translationRequest.Id,
                 MediaId = translationRequest.MediaId,
                 MediaType = translationRequest.MediaType,
                 Status = translationRequest.Status,
-                Title = translationRequest.Title
-            })
-            .ToListAsync();
+                Title = translationRequest.Title,
+                Progress = progress
+            };
+        }).ToList();
     }
 
     /// <inheritdoc />
