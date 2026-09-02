@@ -633,6 +633,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
         translatedJson = RepairTruncatedJson(translatedJson);
 
+        // Step 1: Try parsing as-is
         try
         {
             var translatedItems = JsonSerializer.Deserialize<List<StructuredBatchResponse>>(translatedJson,
@@ -648,20 +649,36 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
             return MergeByPosition(translatedItems);
         }
-        catch (JsonException ex)
-        {
-            // Fallback: regex extraction for models that output broken JSON
-            // (missing position numbers, stray characters, etc.)
-            var fallbackItems = ExtractTranslatedLines(translatedJson);
-            if (fallbackItems.Count > 0)
-            {
-                _logger.LogWarning(ex, "JSON parse failed, recovered {Count} lines via regex fallback", fallbackItems.Count);
-                return MergeByPosition(fallbackItems);
-            }
+        catch (JsonException) { }
 
-            _logger.LogError(ex, "Failed to parse JSON response: {Json}", translatedJson);
-            throw new TranslationParseException("Failed to parse JSON translated subtitles", ex);
+        // Step 2: Try repairing stray characters and parsing again
+        var repaired = RepairBrokenJson(translatedJson);
+        try
+        {
+            var translatedItems = JsonSerializer.Deserialize<List<StructuredBatchResponse>>(repaired,
+                new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+            if (translatedItems != null)
+            {
+                _logger.LogWarning("JSON repaired successfully after cleaning stray characters");
+                return MergeByPosition(translatedItems);
+            }
         }
+        catch (JsonException) { }
+
+        // Step 3: Last resort — regex fallback for truly broken JSON
+        var fallbackItems = ExtractTranslatedLines(translatedJson);
+        if (fallbackItems.Count > 0)
+        {
+            _logger.LogWarning("JSON parse failed, recovered {Count} lines via regex fallback", fallbackItems.Count);
+            return MergeByPosition(fallbackItems);
+        }
+
+        _logger.LogError("Failed to parse JSON response: {Json}", translatedJson);
+        throw new TranslationParseException("Failed to parse JSON translated subtitles");
     }
 
     private async Task<Dictionary<int, string>> TranslateBatchWithGenerateApi(
@@ -827,6 +844,17 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     }
 
     /// <summary>
+    /// Attempts to repair broken JSON by cleaning stray characters injected by models.
+    /// Only used when standard parse fails — not applied to valid JSON.
+    /// </summary>
+    private static string RepairBrokenJson(string json)
+    {
+        // Strip stray ) after closing quote: "text") → "text"
+        // Only match ") followed by , or } or ] (not valid JSON like "},")
+        var result = Regex.Replace(json, @"""\s*\)\s*([},\]])", @"""$1");
+        return result;
+    }
+
     /// <summary>
     /// Regex fallback that extracts position/line pairs from broken JSON.
     /// Handles: missing position numbers, stray characters, truncated output.
@@ -878,10 +906,6 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     private string RepairTruncatedJson(string json)
     {
         json = json.Trim();
-
-        // Strip stray ) or } that models sometimes inject after a closing quote
-        // e.g. "line":"text"),{  →  "line":"text",{  or  "line":"text"}]}
-        json = Regex.Replace(json, @"""\s*[)\}]\s*([},\]])", @"""$1");
 
         // Extract between first [ and last ] if present
         var jsonStart = json.IndexOf('[');

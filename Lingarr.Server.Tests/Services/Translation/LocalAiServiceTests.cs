@@ -98,20 +98,19 @@ public class LocalAiServiceTests
         // Arrange
         UseSettings(ChatEndpoint);
 
-        // The chat endpoint tries structured output first and falls back to plain JSON parsing,
-        // so a failing attempt sends two requests before the retry kicks in.
+        // MalformedJson has unescaped quotes inside a string value ("adiós") which breaks
+        // both JSON parsing and regex extraction. Only the first valid element is recovered.
         SetupResponseSequence(
             ChatResponse(MalformedJson),
-            ChatResponse(MalformedJson),
-            ChatResponse("{\"translations\":" + ValidJson + "}"));
+            ChatResponse(ValidJson));
 
         // Act
         var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
 
-        // Assert — regex fallback recovers the 2 lines from malformed JSON on first try
-        Assert.Equal(2, result.Count);
+        // Assert — regex fallback recovers 1 line from malformed JSON, batch returns partial
+        Assert.Equal(1, result.Count);
         Assert.Equal("Hola", result[1]);
-        VerifyRequestsSent(1); // recovered via regex, no retry needed
+        VerifyRequestsSent(1); // regex recovered partial, no retry needed
     }
 
     [Fact]

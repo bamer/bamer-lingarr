@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.16.0] - 2026-08-31
+
+### Fixed
+- **JSON parse recovery workflow** — 3-step pipeline: (1) standard parse, (2) repair stray characters + retry, (3) regex fallback. No more aggressive regex on valid JSON.
+- **Stray character cleanup** — Only runs on parse failure, not on valid JSON.
+
 ## [2.15.0] - 2026-08-31
 
 ### Fixed
