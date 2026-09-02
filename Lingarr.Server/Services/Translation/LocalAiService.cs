@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Models.Batch;
 using Lingarr.Contracts.Translation;
@@ -649,6 +650,15 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         }
         catch (JsonException ex)
         {
+            // Fallback: regex extraction for models that output broken JSON
+            // (missing position numbers, stray characters, etc.)
+            var fallbackItems = ExtractTranslatedLines(translatedJson);
+            if (fallbackItems.Count > 0)
+            {
+                _logger.LogWarning(ex, "JSON parse failed, recovered {Count} lines via regex fallback", fallbackItems.Count);
+                return MergeByPosition(fallbackItems);
+            }
+
             _logger.LogError(ex, "Failed to parse JSON response: {Json}", translatedJson);
             throw new TranslationParseException("Failed to parse JSON translated subtitles", ex);
         }
@@ -818,12 +828,60 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 
     /// <summary>
     /// <summary>
+    /// Regex fallback that extracts position/line pairs from broken JSON.
+    /// Handles: missing position numbers, stray characters, truncated output.
+    /// </summary>
+    private static List<StructuredBatchResponse> ExtractTranslatedLines(string json)
+    {
+        var results = new List<StructuredBatchResponse>();
+
+        // Match {"position":<optional_number>,"line":"<value>"} or variations
+        var pattern = @"\{""position"":\s*(\d+)?\s*,\s*""line""\s*:\s*""((?:[^""\\]|\\.)*)""\s*\}";
+        var matches = Regex.Matches(json, pattern);
+
+        // If we got matches with position numbers, use them
+        foreach (Match match in matches)
+        {
+            if (match.Groups[1].Success && int.TryParse(match.Groups[1].Value, out var position))
+            {
+                var line = match.Groups[2].Value
+                    .Replace("\\\"", "\"")
+                    .Replace("\\n", "\n");
+                results.Add(new StructuredBatchResponse { Position = position, Line = line });
+            }
+        }
+
+        if (results.Count > 0)
+        {
+            return results;
+        }
+
+        // If no position numbers found, extract lines and assign sequential positions
+        var linePattern = @"""line""\s*:\s*""((?:[^""\\]|\\.)*)""";
+        var lineMatches = Regex.Matches(json, linePattern);
+        var assumedPosition = 1;
+        foreach (Match match in lineMatches)
+        {
+            var line = match.Groups[1].Value
+                .Replace("\\\"", "\"")
+                .Replace("\\n", "\n");
+            results.Add(new StructuredBatchResponse { Position = assumedPosition++, Line = line });
+        }
+
+        return results;
+    }
+
+    /// <summary>
     /// Attempts to repair truncated/malformed JSON from model output.
     /// Handles: missing opening [, extra ], truncated arrays, missing closing ].
     /// </summary>
     private string RepairTruncatedJson(string json)
     {
         json = json.Trim();
+
+        // Strip stray ) or } that models sometimes inject after a closing quote
+        // e.g. "line":"text"),{  →  "line":"text",{  or  "line":"text"}]}
+        json = Regex.Replace(json, @"""\s*[)\}]\s*([},\]])", @"""$1");
 
         // Extract between first [ and last ] if present
         var jsonStart = json.IndexOf('[');

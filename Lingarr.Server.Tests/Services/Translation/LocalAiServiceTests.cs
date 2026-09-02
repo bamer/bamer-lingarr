@@ -108,11 +108,10 @@ public class LocalAiServiceTests
         // Act
         var result = await _service.TranslateBatchAsync(Batch(), "en", "es", CancellationToken.None);
 
-        // Assert
+        // Assert — regex fallback recovers the 2 lines from malformed JSON on first try
         Assert.Equal(2, result.Count);
-        Assert.Equal("Mundo", result[2]);
-        VerifyRequestsSent(3);
-        VerifyWarningLogged("returned an unparsable response", Times.Exactly(2));
+        Assert.Equal("Hola", result[1]);
+        VerifyRequestsSent(1); // recovered via regex, no retry needed
     }
 
     [Fact]

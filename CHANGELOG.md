@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.15.0] - 2026-08-31
+
+### Fixed
+- **Malformed JSON recovery** — Models that output broken JSON (missing position numbers, stray characters like `)`, unescaped quotes) now get recovered via regex fallback instead of failing the batch.
+- **Stray character cleanup** — Regex strips `)` or `}` injected by models after closing quotes.
+
 ## [2.14.0] - 2026-08-31
 
 ### Fixed
