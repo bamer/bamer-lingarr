@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.18.0] - 2026-08-31
+
+### Fixed
+- **HttpClient.Timeout error** — Moved timeout/auth setup to one-time `_httpClientConfigured` flag (can't set after first request). Model/endpoint/options still read fresh on every request.
+
 ## [2.17.0] - 2026-08-31
 
 ### Fixed

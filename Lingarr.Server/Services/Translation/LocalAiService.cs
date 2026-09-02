@@ -19,6 +19,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
 {
     private readonly HttpClient _httpClient;
     private readonly IRequestTemplateService _requestTemplateService;
+    private bool _httpClientConfigured;
     private string? _model;
     private string? _endpoint;
     private string? _chatRequestTemplate;
@@ -48,16 +49,12 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     }
 
     /// <summary>
-    /// Initializes the translation service with necessary configurations and credentials.
-    /// This method is thread-safe and ensures one-time initialization of service dependencies.
+    /// Reads fresh settings on every call. HttpClient timeout/auth must be set once
+    /// before first request — handled separately in SetupHttpClientIfNeeded.
     /// </summary>
-    /// <param name="sourceLanguage">The source language code for translation</param>
-    /// <param name="targetLanguage">The target language code for translation</param>
-    /// <returns>A task that represents the asynchronous initialization operation</returns>
-    /// <exception cref="InvalidOperationException">Thrown when required configuration settings are missing or invalid</exception>
     private async Task InitializeAsync(string sourceLanguage, string targetLanguage)
     {
-        // Always read fresh settings — no caching, each request gets current config
+        // Always read fresh settings — each request gets current config
         var settings = await _settings.GetSettings([
             SettingKeys.Translation.LocalAi.Model,
             SettingKeys.Translation.LocalAi.Endpoint,
@@ -107,18 +104,25 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             _useStructuredOutput = settings.TryGetValue(SettingKeys.Translation.ModelStructuredOutput, out var soStr)
                 && soStr == "true";
 
-            var requestTimeout = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
-                out var timeOut)
-                ? timeOut
-                : 5;
-            _httpClient.Timeout = TimeSpan.FromMinutes(requestTimeout);
-            _httpClient.DefaultRequestHeaders.Accept.Clear();
-            _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
-
-            var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey);
-            if (!string.IsNullOrEmpty(apiKey))
+            // HttpClient timeout/headers can only be set before first request
+            if (!_httpClientConfigured)
             {
-                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+                var requestTimeout = int.TryParse(settings[SettingKeys.Translation.RequestTimeout],
+                    out var timeOut)
+                    ? timeOut
+                    : 5;
+                _httpClient.Timeout = TimeSpan.FromMinutes(requestTimeout);
+                _httpClient.DefaultRequestHeaders.Accept.Clear();
+                _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
+
+                var apiKey = await _settings.GetEncryptedSetting(SettingKeys.Translation.LocalAi.ApiKey);
+                if (!string.IsNullOrEmpty(apiKey))
+                {
+                    _httpClient.DefaultRequestHeaders.Authorization =
+                        new AuthenticationHeaderValue("Bearer", apiKey);
+                }
+
+                _httpClientConfigured = true;
             }
 
             _maxRetries = int.TryParse(settings[SettingKeys.Translation.MaxRetries], out var maxRetries) 
