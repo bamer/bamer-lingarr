@@ -188,7 +188,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                     throw new TranslationException("Too many requests. Retry limit reached.", ex);
                 }
 
-                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+et                 await Task.Delay(delay, linked.Token).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
