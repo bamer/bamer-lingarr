@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.19.2] - 2026-09-06
+
+### Fixed
+- **Language detection crash on `auto`** (shipped in 2.19.1 image) — `DetectLanguageAsync` no longer passes `auto` to `InitializeAsync`.
+- **Detection on `generate` endpoints** — `DetectLanguageAsync` now also works when LocalAI is configured with a `/generate` endpoint, not just chat completions.
+- **Untagged skip visibility** — New `SkippedUnknownLanguage` outcome: files without a usable tag are counted separately (`unknown language: N`) instead of being lumped into `no source language`. The detector also treats `"unknown"` as untagged and logs when no usable service is configured.
+
 ## [2.19.0] - 2026-09-06
 
 ### Fixed

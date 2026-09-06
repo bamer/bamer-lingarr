@@ -808,7 +808,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         // "en" is a placeholder: detection builds its own prompt and never uses
         // the language replacements ("auto" would throw in GetCultureName).
         await InitializeAsync("en", "en");
-        if (!_isChatEndpoint || string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_endpoint))
+        if (string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_endpoint))
         {
             return null;
         }
@@ -818,6 +818,22 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             "Reply with ONLY the ISO 639-1 two-letter language code " +
             "(for example: en, fr, de, es, zu). No explanation, no punctuation.\n\n" +
             sampleText;
+
+        string? content;
+        if (_isChatEndpoint)
+        {
+            content = await DetectLanguageWithChatApiAsync(prompt, cancellationToken);
+        }
+        else
+        {
+            content = await DetectLanguageWithGenerateApiAsync(prompt, cancellationToken);
+        }
+
+        return string.IsNullOrWhiteSpace(content) ? null : content.Trim();
+    }
+
+    private async Task<string?> DetectLanguageWithChatApiAsync(string prompt, CancellationToken cancellationToken)
+    {
         var bodyJson = JsonSerializer.Serialize(new
         {
             model = _model,
@@ -846,10 +862,38 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             return null;
         }
 
-        var content = chatResponse?.Choices is { Count: > 0 }
+        return chatResponse?.Choices is { Count: > 0 }
             ? chatResponse.Choices[0].Message.Content
             : null;
-        return string.IsNullOrWhiteSpace(content) ? null : content.Trim();
+    }
+
+    private async Task<string?> DetectLanguageWithGenerateApiAsync(string prompt, CancellationToken cancellationToken)
+    {
+        var bodyJson = JsonSerializer.Serialize(new
+        {
+            model = _model,
+            prompt,
+            stream = false
+        });
+
+        using var response = await _httpClient.PostAsync(
+            _endpoint,
+            new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        try
+        {
+            return JsonSerializer.Deserialize<GenerateResponse>(responseBody)?.Response;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

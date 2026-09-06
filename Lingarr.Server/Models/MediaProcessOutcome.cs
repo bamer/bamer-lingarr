@@ -14,6 +14,8 @@ public enum MediaProcessOutcome
     SkippedNoSubtitles,
     /// <summary>No subtitle file matches the configured source languages.</summary>
     SkippedNoSourceLanguage,
+    /// <summary>Subtitle files exist but carry no usable language tag (AI detection failed).</summary>
+    SkippedUnknownLanguage,
     /// <summary>Every target language is already present or requested.</summary>
     SkippedNothingToTranslate
 }

@@ -202,6 +202,7 @@ public class AutomatedTranslationJob
         var index = currentIndex;
         var skippedNoSubtitles = 0;
         var skippedNoSource = 0;
+        var skippedUnknown = 0;
         var skippedUpToDate = 0;
         var skippedTooRecent = 0;
 
@@ -228,6 +229,9 @@ public class AutomatedTranslationJob
                         break;
                     case MediaProcessOutcome.SkippedNoSubtitles:
                         skippedNoSubtitles++;
+                        break;
+                    case MediaProcessOutcome.SkippedUnknownLanguage:
+                        skippedUnknown++;
                         break;
                     case MediaProcessOutcome.SkippedNoSourceLanguage:
                     case MediaProcessOutcome.SkippedInvalidMedia:
@@ -260,10 +264,10 @@ public class AutomatedTranslationJob
 
         _logger.LogInformation(
             "Movies pass complete: {New} new translations, {Skipped} skipped " +
-            "(no subtitles: {NoSubs}, no source language: {NoSource}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
             translationsInitiated,
-            skippedNoSubtitles + skippedNoSource + skippedUpToDate + skippedTooRecent,
-            skippedNoSubtitles, skippedNoSource, skippedUpToDate, skippedTooRecent);
+            skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent,
+            skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent);
 
         return translationsInitiated;
     }
@@ -311,6 +315,7 @@ public class AutomatedTranslationJob
         var episodeIndex = currentIndex;
         var skippedNoSubtitles = 0;
         var skippedNoSource = 0;
+        var skippedUnknown = 0;
         var skippedUpToDate = 0;
         var skippedTooRecent = 0;
 
@@ -344,6 +349,9 @@ public class AutomatedTranslationJob
                     case MediaProcessOutcome.SkippedNoSubtitles:
                         skippedNoSubtitles++;
                         break;
+                    case MediaProcessOutcome.SkippedUnknownLanguage:
+                        skippedUnknown++;
+                        break;
                     case MediaProcessOutcome.SkippedNoSourceLanguage:
                     case MediaProcessOutcome.SkippedInvalidMedia:
                         skippedNoSource++;
@@ -376,10 +384,10 @@ public class AutomatedTranslationJob
 
         _logger.LogInformation(
             "Episodes pass complete: {New} new translations, {Skipped} skipped " +
-            "(no subtitles: {NoSubs}, no source language: {NoSource}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
             translationsInitiated,
-            skippedNoSubtitles + skippedNoSource + skippedUpToDate + skippedTooRecent,
-            skippedNoSubtitles, skippedNoSource, skippedUpToDate, skippedTooRecent);
+            skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent,
+            skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent);
 
         return translationsInitiated;
     }

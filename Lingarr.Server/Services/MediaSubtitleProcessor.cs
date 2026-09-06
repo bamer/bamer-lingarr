@@ -72,16 +72,15 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
 
         // Untagged files violate the naming convention and can never match a source
         // language — ask the AI to identify them and rename, then re-evaluate.
-        if (subtitles.Any(subtitle => string.IsNullOrEmpty(subtitle.Language)))
+        // The detector itself no-ops when every file already carries a tag.
+        var hadUntagged = subtitles.Any(subtitle =>
+            string.IsNullOrEmpty(subtitle.Language) || subtitle.Language == "unknown");
+        if (await _languageDetector.DetectAndRenameUnknownSubtitlesAsync(subtitles))
         {
-            var renamed = await _languageDetector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
-            if (renamed)
+            subtitles = await _subtitleService.GetSubtitles(media.Path, media.FileName);
+            if (!subtitles.Any())
             {
-                subtitles = await _subtitleService.GetSubtitles(media.Path, media.FileName);
-                if (!subtitles.Any())
-                {
-                    return MediaProcessOutcome.SkippedNoSubtitles;
-                }
+                return MediaProcessOutcome.SkippedNoSubtitles;
             }
         }
 
@@ -116,7 +115,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         }
         
         _logger.LogInformation("Initiating subtitle processing.");
-        return await ProcessSubtitles(subtitles, sourceLanguages, targetLanguages, ignoreCaptions);
+        return await ProcessSubtitles(subtitles, sourceLanguages, targetLanguages, ignoreCaptions, hadUntagged);
     }
 
     /// <summary>
@@ -131,7 +130,8 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         List<Subtitles> subtitles,
         HashSet<string> sourceLanguages,
         HashSet<string> targetLanguages,
-        string ignoreCaptions)
+        string ignoreCaptions,
+        bool hadUntagged)
     {
         if (sourceLanguages.Count == 0 || targetLanguages.Count == 0)
         {
@@ -159,7 +159,9 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 string.Join(", ", sourceLanguages),
                 string.Join(", ", targetLanguages));
 
-            return MediaProcessOutcome.SkippedNoSourceLanguage;
+            return hadUntagged
+                ? MediaProcessOutcome.SkippedUnknownLanguage
+                : MediaProcessOutcome.SkippedNoSourceLanguage;
         }
 
         var languagesToTranslate = targetLanguages.Except(selected.AvailableLanguages).ToList();

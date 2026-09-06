@@ -64,7 +64,7 @@ public class LanguageDetectionHookTests : MediaSubtitleProcessorTestBase
     }
 
     [Fact]
-    public async Task ProcessMedia_TaggedFiles_SkipsDetection()
+    public async Task ProcessMedia_TaggedFiles_DetectorNoOpsAndProceeds()
     {
         var movie = await CreateTestMovie();
         var subtitles = new List<Subtitles>
@@ -88,10 +88,15 @@ public class LanguageDetectionHookTests : MediaSubtitleProcessorTestBase
         var result = await Processor.ProcessMedia(movie, MediaType.Movie);
 
         Assert.True(result);
+        // Detector runs but finds nothing to rename (default mock returns false).
         LanguageDetectorMock.Verify(
             d => d.DetectAndRenameUnknownSubtitlesAsync(
                 It.IsAny<List<Subtitles>>(),
                 It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
+        TranslationRequestServiceMock.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SourceLanguage == "en" && t.TargetLanguage == "ro")),
+            Times.Once);
     }
 }

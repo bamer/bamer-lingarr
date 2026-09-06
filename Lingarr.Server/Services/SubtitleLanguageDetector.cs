@@ -44,16 +44,21 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
         CancellationToken cancellationToken = default)
     {
         var unknown = subtitles
-            .Where(subtitle => string.IsNullOrEmpty(subtitle.Language))
+            .Where(subtitle => string.IsNullOrEmpty(subtitle.Language) || subtitle.Language == "unknown")
             .ToList();
         if (unknown.Count == 0)
         {
             return false;
         }
 
+        _logger.LogInformation(
+            "Found {Count} subtitle file(s) without a language tag, attempting AI language detection.",
+            unknown.Count);
+
         var service = await CreateDetectionServiceAsync();
         if (service == null)
         {
+            _logger.LogWarning("Skipping language detection: no usable translation service is configured.");
             return false;
         }
 
