@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.21.0] - 2026-09-06
+
+### Added
+- **End-of-task automation summary** — `Automation run complete` with grand totals (scanned/total + per-cause skips across movies and episodes) is logged at the end of every run. Pass summaries now include `scanned/total` so list sizes are visible.
+
 ## [2.20.0] - 2026-09-06
 
 ### Fixed

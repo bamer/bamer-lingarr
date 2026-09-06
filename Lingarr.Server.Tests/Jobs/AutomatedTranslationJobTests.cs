@@ -117,9 +117,9 @@ public class AutomatedTranslationJobTests
             throw new InvalidOperationException("ProcessMovies method not found via reflection.");
         }
 
-        var resultTask = (Task<int>)method.Invoke(job, new object[] { 1 })!;
+        var resultTask = (Task<AutomationPassStats>)method.Invoke(job, new object[] { 1 })!;
         var result = await resultTask.ConfigureAwait(false);
-        return result > 0;
+        return result.New > 0;
     }
 
     private static void SetPrivateField<T>(AutomatedTranslationJob job, string fieldName, T value)

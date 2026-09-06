@@ -98,28 +98,39 @@ public class AutomatedTranslationJob
         var translationCycle = settings[SettingKeys.Automation.TranslationCycle] == "true" ? "movies" : "shows";
         _logger.LogInformation($"Starting translation cycle for |Green|{translationCycle}|/Green|");
 
-        var translationsPerformed = 0;
+        // ponytail: one grand-total summary at the end of the task — per-pass lines
+        // get buried mid-logs on big libraries.
+        var total = new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
         switch (translationCycle)
         {
             case "movies":
                 await _settingService.SetSetting(SettingKeys.Automation.TranslationCycle, "false");
-                translationsPerformed += await ProcessMovies(_maxTranslationsPerRun);
-                if (translationsPerformed < _maxTranslationsPerRun)
+                total += await ProcessMovies(_maxTranslationsPerRun);
+                if (total.New < _maxTranslationsPerRun)
                 {
-                    await ProcessShows(_maxTranslationsPerRun - translationsPerformed);
+                    total += await ProcessShows(_maxTranslationsPerRun - total.New);
                 }
 
                 break;
             case "shows":
                 await _settingService.SetSetting(SettingKeys.Automation.TranslationCycle, "true");
-                translationsPerformed += await ProcessShows(_maxTranslationsPerRun);
-                if (translationsPerformed < _maxTranslationsPerRun)
+                total += await ProcessShows(_maxTranslationsPerRun);
+                if (total.New < _maxTranslationsPerRun)
                 {
-                    await ProcessMovies(_maxTranslationsPerRun - translationsPerformed);
+                    total += await ProcessMovies(_maxTranslationsPerRun - total.New);
                 }
 
                 break;
         }
+
+        _logger.LogInformation(
+            "Automation run complete: {New} new translations, {Scanned}/{Total} scanned, {Skipped} skipped " +
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            total.New,
+            total.Scanned,
+            total.Total,
+            total.NoSubtitles + total.NoSource + total.Unknown + total.UpToDate + total.TooRecent,
+            total.NoSubtitles, total.NoSource, total.Unknown, total.UpToDate, total.TooRecent);
 
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());
     }
@@ -165,7 +176,7 @@ public class AutomatedTranslationJob
         return false;
     }
 
-    private async Task<int> ProcessMovies(int limit)
+    private async Task<AutomationPassStats> ProcessMovies(int limit)
     {
         _logger.LogInformation("Movie Translation job initiated");
 
@@ -177,7 +188,7 @@ public class AutomatedTranslationJob
         if (!movies.Any())
         {
             _logger.LogInformation("No translatable movies found.");
-            return 0;
+            return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
         }
         
         // Instead of a random selection based on updatedAt, we will use a cycle so that all shows are processed.
@@ -263,16 +274,26 @@ public class AutomatedTranslationJob
         SetProcessingIndex(MovieProcessingIndexKey, newIndex);
 
         _logger.LogInformation(
-            "Movies pass complete: {New} new translations, {Skipped} skipped " +
+            "Movies pass complete: {New} new translations, {Scanned}/{Total} scanned, {Skipped} skipped " +
             "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
             translationsInitiated,
+            scannedMovies,
+            movies.Count,
             skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent,
             skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent);
 
-        return translationsInitiated;
+        return new AutomationPassStats(
+            translationsInitiated,
+            scannedMovies,
+            movies.Count,
+            skippedNoSubtitles,
+            skippedNoSource,
+            skippedUnknown,
+            skippedUpToDate,
+            skippedTooRecent);
     }
 
-    private async Task<int> ProcessShows(int limit)
+    private async Task<AutomationPassStats> ProcessShows(int limit)
     {
         _logger.LogInformation("Show Translation job initiated");
 
@@ -293,7 +314,7 @@ public class AutomatedTranslationJob
         if (!episodes.Any())
         {
             _logger.LogInformation("No translatable shows found.");
-            return 0;
+            return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
         }
 
         // Instead of a random selection based on updatedAt, we will use a cycle so that all shows are processed.
@@ -383,13 +404,23 @@ public class AutomatedTranslationJob
         SetProcessingIndex(ShowProcessingIndexKey, newIndex);
 
         _logger.LogInformation(
-            "Episodes pass complete: {New} new translations, {Skipped} skipped " +
+            "Episodes pass complete: {New} new translations, {Scanned}/{Total} scanned, {Skipped} skipped " +
             "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
             translationsInitiated,
+            scannedEpisodes,
+            episodes.Count,
             skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent,
             skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent);
 
-        return translationsInitiated;
+        return new AutomationPassStats(
+            translationsInitiated,
+            scannedEpisodes,
+            episodes.Count,
+            skippedNoSubtitles,
+            skippedNoSource,
+            skippedUnknown,
+            skippedUpToDate,
+            skippedTooRecent);
     }
 
     private int GetProcessingIndex(string key)
