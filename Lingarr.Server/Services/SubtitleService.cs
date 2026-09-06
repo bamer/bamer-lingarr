@@ -62,12 +62,9 @@ public class SubtitleService : ISubtitleService
                         {
                             language = captionedLang;
                         }
-                        // Hindi is an exception, if we didn't find a language, and we did found Hindi, We set that as language
-                        else if (caption == "hi")
-                        {
-                            language = caption;
-                            caption = "";
-                        }
+                        // A lone ".hi" suffix is ambiguous: Hearing Impaired caption far more
+                        // often than Hindi. Leave the language empty (caption kept) so the AI
+                        // language detector identifies and renames the file.
                     }
                     else if (TryGetLanguageByPart(last, out var languageCode))
                     {

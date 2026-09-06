@@ -1,5 +1,4 @@
-﻿using System.Security.Cryptography;
-using Lingarr.Contracts.Interfaces;
+﻿using Lingarr.Contracts.Interfaces;
 using Lingarr.Contracts.Models;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
@@ -21,7 +20,6 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     private readonly ISubtitleLanguageDetector _languageDetector;
     private readonly LanguageCodeService _languageCodeService;
     private readonly LingarrDbContext _dbContext;
-    private string _hash = string.Empty;
     private IMedia _media = null!;
     private MediaType _mediaType;
 
@@ -90,35 +88,17 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         var sourceLanguages = await GetLanguagesSetting<SourceLanguage>(SettingKeys.Translation.SourceLanguages);
         var targetLanguages = await GetLanguagesSetting<TargetLanguage>(SettingKeys.Translation.TargetLanguages);
         var ignoreCaptions = await _settingService.GetSetting(SettingKeys.Translation.IgnoreCaptions) ?? "false";
+        var captionSatisfiesTarget =
+            await _settingService.GetSetting(SettingKeys.Translation.CaptionSatisfiesTarget) ?? "true";
 
         _media = media;
         _mediaType = mediaType;
-        _hash = CreateHash(subtitles, sourceLanguages, targetLanguages, ignoreCaptions);
-        if (!string.IsNullOrEmpty(media.MediaHash) && media.MediaHash == _hash)
-        {
-            // Only trust the hash when translation requests actually exist for this media.
-            // A hash burned on a failure path (no source, captions, etc.) must NOT permanently
-            // skip the media — it becomes translatable once subtitles or settings change.
-            var hasActiveRequests = await _dbContext.TranslationRequests
-                .AnyAsync(translationRequest =>
-                    translationRequest.MediaId == media.Id
-                    && translationRequest.MediaType == mediaType
-                    && (translationRequest.Status == TranslationStatus.Pending
-                        || translationRequest.Status == TranslationStatus.InProgress
-                        || translationRequest.Status == TranslationStatus.Completed));
 
-            if (hasActiveRequests)
-            {
-                return MediaProcessOutcome.SkippedNothingToTranslate;
-            }
-
-            _logger.LogInformation(
-                "Media {MediaName} has a stale hash without translation requests, re-evaluating.",
-                media.FileName);
-        }
-        
-        _logger.LogInformation("Initiating subtitle processing.");
-        return await ProcessSubtitles(subtitles, sourceLanguages, targetLanguages, ignoreCaptions, hadUntagged);
+        // ponytail: no hash shortcut — the file listing above is already done, so
+        // re-verifying targets against actual files costs two small queries and can
+        // never go stale (a Completed request for a deleted file re-queues).
+        return await ProcessSubtitles(
+            subtitles, sourceLanguages, targetLanguages, ignoreCaptions, captionSatisfiesTarget, hadUntagged);
     }
 
     /// <summary>
@@ -134,6 +114,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         HashSet<string> sourceLanguages,
         HashSet<string> targetLanguages,
         string ignoreCaptions,
+        string captionSatisfiesTarget,
         bool hadUntagged)
     {
         if (sourceLanguages.Count == 0 || targetLanguages.Count == 0)
@@ -144,11 +125,11 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             return MediaProcessOutcome.SkippedNoSourceLanguage;
         }
 
-        // ponytail: caption files (forced/SDH) count as "language present" so we don't
-        // retranslate e.g. full th.srt when only th.forced.srt exists — but they no longer
-        // skip the whole media like before (2548 medias blocked because one target had a
-        // caption while other targets were missing). SelectSourceSubtitle already avoids
-        // picking captions as source when ignoreCaptions is on.
+        // A caption-only file (forced/SDH/HI) satisfies its target only when the
+        // caption_satisfies_target setting is on. Either way it never blocks the
+        // other targets (2548 medias were stuck on that before).
+        // SelectSourceSubtitle already avoids picking captions as source when
+        // ignoreCaptions is on.
         var selected = _subtitleService.SelectSourceSubtitle(subtitles, sourceLanguages, ignoreCaptions);
         if (selected == null || !targetLanguages.Any())
         {
@@ -169,9 +150,15 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
 
         // ponytail: same culture-aware matching as source selection — a regional
         // target (fr-FR) is satisfied by its neutral file (fr), not re-queued.
+        var presentLanguages = captionSatisfiesTarget == "true"
+            ? selected.AvailableLanguages
+            : subtitles
+                .Where(subtitle => string.IsNullOrEmpty(subtitle.Caption))
+                .Select(subtitle => subtitle.Language.ToLowerInvariant())
+                .ToHashSet();
         var languagesToTranslate = targetLanguages
             .Where(targetLanguage =>
-                _languageCodeService.GetBestMatch(targetLanguage, selected.AvailableLanguages) is null)
+                _languageCodeService.GetBestMatch(targetLanguage, presentLanguages) is null)
             .ToList();
         
         var activeStatuses = new[]
@@ -215,35 +202,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 selected.Subtitle.Path);
         }
 
-        await UpdateHash();
         return MediaProcessOutcome.Processed;
-    }
-
-    /// <summary>
-    /// Creates a hash of the current subtitle file state.
-    /// </summary>
-    /// <param name="subtitles">List of subtitle file paths to include in the hash.</param>
-    /// <param name="sourceLanguages">The source languages.</param>
-    /// <param name="targetLanguages">The target languages.</param>
-    /// <param name="ignoreCaptions">The ignore captions setting.</param>
-    /// <returns>A Base64 encoded string representing the hash of the current subtitle state.</returns>
-    private string CreateHash(
-        List<Subtitles> subtitles,
-        HashSet<string> sourceLanguages,
-        HashSet<string> targetLanguages,
-        string ignoreCaptions)
-    {
-        using var sha256 = SHA256.Create();
-        var subtitlePaths = string.Join("|", subtitles.Select(subtitle => subtitle.Path)
-            .ToList()
-            .OrderBy(f => f));
-        
-        var sourceLangs = string.Join(",", sourceLanguages.OrderBy(l => l));
-        var targetLangs = string.Join(",", targetLanguages.OrderBy(l => l));
-        
-        var hashInput = $"{subtitlePaths}|{sourceLangs}|{targetLangs}|{ignoreCaptions}";
-        var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(hashInput));
-        return Convert.ToBase64String(hashBytes);
     }
 
     /// <summary>
@@ -258,16 +217,5 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         return languages
             .Select(lang => lang.Code)
             .ToHashSet();
-    }
-
-    /// <summary>
-    /// Updates the media hash in the database.
-    /// </summary>
-    /// <returns>A task representing the asynchronous operation.</returns>
-    private async Task UpdateHash()
-    {
-        _media.MediaHash = _hash;
-        _dbContext.Update(_media);
-        await _dbContext.SaveChangesAsync();
     }
 }

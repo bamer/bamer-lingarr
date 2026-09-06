@@ -21,6 +21,20 @@
                 </ToggleButton>
 
                 <div class="flex flex-col space-x-2">
+                    <span class="font-semibold">
+                        Caption file satisfies its target language:
+                    </span>
+                    When enabled, a caption-only subtitle (Forced, SDH, Hearing Impaired)
+                    counts as if the full subtitle for that language already exists. Disable
+                    it to queue a full translation even when only a caption file is present.
+                </div>
+                <ToggleButton v-model="captionSatisfiesTarget">
+                    <span class="text-primary-content text-sm font-medium">
+                        {{ captionSatisfiesTarget == 'true' ? 'Enabled' : 'Disabled' }}
+                    </span>
+                </ToggleButton>
+
+                <div class="flex flex-col space-x-2">
                     <span class="font-semibold">Fix overlapping subtitles:</span>
                     Automatically resolves overlapping subtitles by trimming the end time of the
                     earlier subtitle. This won't work on subtitles that are out of sync.
@@ -119,6 +133,14 @@ const ignoreCaptions = computed({
     get: (): string => settingsStore.getSetting(SETTINGS.IGNORE_CAPTIONS) as string,
     set: (newValue: string): void => {
         settingsStore.updateSetting(SETTINGS.IGNORE_CAPTIONS, newValue, true)
+        saveNotification.value?.show()
+    }
+})
+
+const captionSatisfiesTarget = computed({
+    get: (): string => settingsStore.getSetting(SETTINGS.CAPTION_SATISFIES_TARGET) as string,
+    set: (newValue: string): void => {
+        settingsStore.updateSetting(SETTINGS.CAPTION_SATISFIES_TARGET, newValue, true)
         saveNotification.value?.show()
     }
 })

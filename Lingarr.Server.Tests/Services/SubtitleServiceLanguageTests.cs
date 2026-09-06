@@ -67,7 +67,19 @@ public class SubtitleServiceLanguageTests
         Assert.Equal(("en", "forced"), detected["Movie.en.forced.srt"]);
         Assert.Equal(("", "forced"), detected["Movie.forced.srt"]);
         Assert.Equal("en", detected["Movie.eng.srt"].Language);
-        Assert.Equal(("hi", ""), detected["test.movie.hi.srt"]);
+        // A lone ".hi" is ambiguous (Hearing Impaired vs Hindi): left untagged
+        // with the caption kept, so the AI detector disambiguates it.
+        Assert.Equal(("", "hi"), detected["test.movie.hi.srt"]);
+    }
+
+    [Fact]
+    public async Task GetAllSubtitles_DoubledHiSuffix_ParsesAsHindiWithCaption()
+    {
+        using var tempDirectory = new TempDirectory();
+        var detected = await DetectAsync(CreateService(), tempDirectory.Path,
+            "Movie.hi.hi.srt");
+
+        Assert.Equal(("hi", "hi"), detected["Movie.hi.hi.srt"]);
     }
 
     [Fact]

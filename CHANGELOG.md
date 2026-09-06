@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.22.0] - 2026-09-06
+
+### Fixed
+- **Lone `.hi` suffix no longer assumed Hindi** — It is Hearing Impaired far more often. The file is left untagged (caption kept) and sent to the AI language detector, which renames it correctly (`Movie.hi.en.srt`, or `Movie.hi.hi.srt` for real Hindi).
+- **Hash short-circuit removed** — Every pass now re-verifies missing targets against actual files. A `Completed` request for a deleted file (or any stale hash) can no longer permanently skip a media. This also answers "stale hash without requests": that state simply re-evaluates now, with no hash involved.
+- **Misleading `Initiating subtitle processing` log removed** — It fired before the decision, suggesting work that never happened. Per-request lines and pass summaries remain.
+
+### Added
+- **`Caption satisfies target` setting** (Subtitle settings, default ON = previous behavior) — Turn it OFF to queue a full translation even when only a caption-only file (Forced/SDH/HI) exists for that language. Caption files never block *other* targets either way.
+
 ## [2.21.0] - 2026-09-06
 
 ### Added

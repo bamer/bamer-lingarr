@@ -100,6 +100,7 @@ public static class SettingKeys
         public const string RemoveLanguageTag = "remove_language_tag";
         public const string SubtitleTag = "subtitle_tag";
         public const string IgnoreCaptions = "ignore_captions";
+        public const string CaptionSatisfiesTarget = "caption_satisfies_target";
         public const string RequestTimeout = "request_timeout";
         public const string MaxRetries = "max_retries";
         public const string RetryDelay = "retry_delay";

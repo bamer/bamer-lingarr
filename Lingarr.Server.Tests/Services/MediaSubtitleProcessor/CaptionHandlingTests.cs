@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Lingarr.Core.Configuration;
 using Lingarr.Core.Enum;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
@@ -316,5 +317,98 @@ public class CaptionHandlingTests : MediaSubtitleProcessorTestBase
                 !t.SubtitlePath.Contains("sdh") &&
                 !t.SubtitlePath.Contains(".cc."))),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessMedia_CaptionOnlyTarget_QueuesFullTranslationWhenNotSatisfying()
+    {
+        // Arrange - en.srt source plus th.forced.srt caption-only, target th
+        var movie = await CreateTestMovie();
+        var subtitles = new List<Subtitles>
+        {
+            new()
+            {
+                Path = "/movies/test/test.movie.en.srt",
+                FileName = "test.movie.en",
+                Language = "en",
+                Caption = "",
+                Format = ".srt"
+            },
+            new()
+            {
+                Path = "/movies/test/test.movie.th.forced.srt",
+                FileName = "test.movie.th.forced",
+                Language = "th",
+                Caption = "forced",
+                Format = ".srt"
+            }
+        };
+
+        SubtitleServiceMock
+            .Setup(s => s.GetSubtitles(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(subtitles);
+
+        SetupStandardSettings();
+        SettingServiceMock
+            .Setup(s => s.GetSetting(SettingKeys.Translation.CaptionSatisfiesTarget))
+            .ReturnsAsync("false");
+        SettingServiceMock
+            .Setup(s => s.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages))
+            .ReturnsAsync(new List<TargetLanguage> { new() { Code = "th", Name = "Thai" } });
+
+        // Act
+        var result = await Processor.ProcessMedia(movie, MediaType.Movie);
+
+        // Assert - Caption-only th does not satisfy the target, th is queued from en
+        Assert.True(result);
+        TranslationRequestServiceMock.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SourceLanguage == "en" &&
+                t.TargetLanguage == "th")),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessMedia_CaptionOnlyTarget_SkipsWhenSatisfying()
+    {
+        // Arrange - same files, default behavior (caption satisfies its target)
+        var movie = await CreateTestMovie();
+        var subtitles = new List<Subtitles>
+        {
+            new()
+            {
+                Path = "/movies/test/test.movie.en.srt",
+                FileName = "test.movie.en",
+                Language = "en",
+                Caption = "",
+                Format = ".srt"
+            },
+            new()
+            {
+                Path = "/movies/test/test.movie.th.forced.srt",
+                FileName = "test.movie.th.forced",
+                Language = "th",
+                Caption = "forced",
+                Format = ".srt"
+            }
+        };
+
+        SubtitleServiceMock
+            .Setup(s => s.GetSubtitles(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(subtitles);
+
+        SetupStandardSettings();
+        SettingServiceMock
+            .Setup(s => s.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages))
+            .ReturnsAsync(new List<TargetLanguage> { new() { Code = "th", Name = "Thai" } });
+
+        // Act
+        var result = await Processor.ProcessMedia(movie, MediaType.Movie);
+
+        // Assert - th.forced counts as present by default, nothing queued
+        Assert.False(result);
+        TranslationRequestServiceMock.Verify(
+            s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()),
+            Times.Never);
     }
 }
