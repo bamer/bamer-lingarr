@@ -19,6 +19,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     private readonly ISubtitleService _subtitleService;
     private readonly ISettingService _settingService;
     private readonly ISubtitleLanguageDetector _languageDetector;
+    private readonly LanguageCodeService _languageCodeService;
     private readonly LingarrDbContext _dbContext;
     private string _hash = string.Empty;
     private IMedia _media = null!;
@@ -30,12 +31,14 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         ISettingService settingService,
         ISubtitleService subtitleService,
         ISubtitleLanguageDetector languageDetector,
+        LanguageCodeService languageCodeService,
         LingarrDbContext dbContext)
     {
         _translationRequestService = translationRequestService;
         _settingService = settingService;
         _subtitleService = subtitleService;
         _languageDetector = languageDetector;
+        _languageCodeService = languageCodeService;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -164,7 +167,12 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 : MediaProcessOutcome.SkippedNoSourceLanguage;
         }
 
-        var languagesToTranslate = targetLanguages.Except(selected.AvailableLanguages).ToList();
+        // ponytail: same culture-aware matching as source selection — a regional
+        // target (fr-FR) is satisfied by its neutral file (fr), not re-queued.
+        var languagesToTranslate = targetLanguages
+            .Where(targetLanguage =>
+                _languageCodeService.GetBestMatch(targetLanguage, selected.AvailableLanguages) is null)
+            .ToList();
         
         var activeStatuses = new[]
         {

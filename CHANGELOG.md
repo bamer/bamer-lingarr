@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.20.0] - 2026-09-06
+
+### Fixed
+- **Automation skipping titles with tagged subs (ex. Domino)** — Source/target matching is now culture-aware (`GetBestMatch`) instead of exact string equality. Regional settings (`en-US`/`fr-FR`) match neutral file tags (`en`/`fr`), case-insensitively; a regional target satisfied by its neutral file is no longer re-queued.
+- **UI freezing during automation passes** — The log stream appended with an O(n) array copy + forced layout on *every* SSE message (150–200 ms violations). Messages are now coalesced per animation frame (single push, buffer capped at 1000).
+
 ## [2.19.2] - 2026-09-06
 
 ### Fixed

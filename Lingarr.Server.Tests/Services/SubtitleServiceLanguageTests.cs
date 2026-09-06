@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -67,6 +68,40 @@ public class SubtitleServiceLanguageTests
         Assert.Equal(("", "forced"), detected["Movie.forced.srt"]);
         Assert.Equal("en", detected["Movie.eng.srt"].Language);
         Assert.Equal(("hi", ""), detected["test.movie.hi.srt"]);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_RegionalSourceCode_MatchesNeutralFile()
+    {
+        // Domino case: settings hold en-US/fr-FR while files carry neutral en/fr tags.
+        var service = CreateService();
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = "/x/Domino.en.hi.srt", FileName = "Domino.en.hi", Language = "en", Caption = "hi", Format = ".srt" },
+            new() { Path = "/x/Domino.fr.srt", FileName = "Domino.fr", Language = "fr", Caption = "", Format = ".srt" }
+        };
+
+        var selected = service.SelectSourceSubtitle(
+            subtitles, new HashSet<string> { "en-US", "fr-FR" }, "true");
+
+        Assert.NotNull(selected);
+        Assert.Equal("en", selected.SourceLanguage);
+    }
+
+    [Fact]
+    public void SelectSourceSubtitle_SourceCodeCase_DoesNotMatter()
+    {
+        var service = CreateService();
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = "/x/Movie.en.srt", FileName = "Movie.en", Language = "en", Caption = "", Format = ".srt" }
+        };
+
+        var selected = service.SelectSourceSubtitle(
+            subtitles, new HashSet<string> { "EN" }, "true");
+
+        Assert.NotNull(selected);
+        Assert.Equal("en", selected.SourceLanguage);
     }
 
     private sealed class TempDirectory : System.IDisposable

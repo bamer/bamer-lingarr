@@ -82,6 +82,7 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
             SettingServiceMock.Object,
             SubtitleServiceMock.Object,
             LanguageDetectorMock.Object,
+            new Lingarr.Server.Services.LanguageCodeService(),
             DbContext);
     }
 

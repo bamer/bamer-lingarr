@@ -114,4 +114,79 @@ public class LanguageHandlingTests : MediaSubtitleProcessorTestBase
                 t.SubtitlePath.Contains("test.movie.hi.srt"))),
             Times.Once);
     }
+
+    [Fact]
+    public async Task ProcessMedia_RegionalCodes_QueuesOnlyTrulyMissingTargets()
+    {
+        // Domino case: settings hold regional variants (en-US/fr-FR) while files
+        // carry neutral tags (en/fr). Only "th" must be queued.
+        var movie = await CreateTestMovie();
+        var subtitles = new List<Subtitles>
+        {
+            new()
+            {
+                Path = "/movies/test/test.movie.en.hi.srt",
+                FileName = "test.movie.en.hi",
+                Language = "en",
+                Caption = "hi",
+                Format = ".srt"
+            },
+            new()
+            {
+                Path = "/movies/test/test.movie.fr.srt",
+                FileName = "test.movie.fr",
+                Language = "fr",
+                Caption = "",
+                Format = ".srt"
+            }
+        };
+
+        SubtitleServiceMock
+            .Setup(s => s.GetSubtitles(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(subtitles);
+
+        SubtitleServiceMock
+            .Setup(s => s.SelectSourceSubtitle(
+                It.IsAny<List<Subtitles>>(),
+                It.IsAny<HashSet<string>>(),
+                It.IsAny<string>()))
+            .Returns(new SelectedSourceSubtitle
+            {
+                Subtitle = subtitles[0],
+                SourceLanguage = "en",
+                AvailableLanguages = new HashSet<string> { "en", "fr" }
+            });
+
+        SettingServiceMock
+            .Setup(s => s.GetSettingAsJson<SourceLanguage>(SettingKeys.Translation.SourceLanguages))
+            .ReturnsAsync(new List<SourceLanguage>
+            {
+                new() { Code = "en-US", Name = "English (United States)" },
+                new() { Code = "fr-FR", Name = "French (France)" }
+            });
+
+        SettingServiceMock
+            .Setup(s => s.GetSettingAsJson<TargetLanguage>(SettingKeys.Translation.TargetLanguages))
+            .ReturnsAsync(new List<TargetLanguage>
+            {
+                new() { Code = "en-US", Name = "English (United States)" },
+                new() { Code = "fr-FR", Name = "French (France)" },
+                new() { Code = "th", Name = "Thai" }
+            });
+
+        SettingServiceMock
+            .Setup(s => s.GetSetting(SettingKeys.Translation.IgnoreCaptions))
+            .ReturnsAsync("true");
+
+        var result = await Processor.ProcessMedia(movie, MediaType.Movie);
+
+        Assert.True(result);
+        TranslationRequestServiceMock.Verify(
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.SourceLanguage == "en" && t.TargetLanguage == "th")),
+            Times.Once);
+        TranslationRequestServiceMock.Verify(
+            s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()),
+            Times.Once);
+    }
 }

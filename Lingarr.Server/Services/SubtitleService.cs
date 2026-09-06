@@ -3,6 +3,7 @@ using System.Text;
 using Lingarr.Contracts.Translation;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Subtitle;
+using Lingarr.Server.Models;
 using Lingarr.Server.Models.FileSystem;
 using Lingarr.Server.Services.Subtitle;
 using SubtitleValidationOptions = Lingarr.Server.Models.SubtitleValidationOptions;
@@ -442,11 +443,27 @@ public class SubtitleService : ISubtitleService
             .Select(s => s.Language.ToLowerInvariant())
             .ToHashSet();
 
-        var sourceLanguage = availableLanguages.FirstOrDefault(lang => sourceCodes.Contains(lang));
-        if (sourceLanguage == null)
+        // ponytail: culture-aware match, not exact string equality. Settings may hold
+        // regional variants (en-US) while files carry neutral tags (en) — exact
+        // Contains() skipped those medias entirely (e.g. Domino en/fr files).
+        LanguageMatch? best = null;
+        foreach (var sourceCode in sourceCodes)
+        {
+            var match = _languageCodeService.GetBestMatch(sourceCode, availableLanguages);
+            if (match is null)
+            {
+                continue;
+            }
+            if (best is null || match.Tier < best.Tier)
+            {
+                best = match;
+            }
+        }
+        if (best?.Code == null)
         {
             return null;
         }
+        var sourceLanguage = best.Code;
 
         var sourceSubtitle = ignoreCaptions == "true"
             ? matchingSubtitles.FirstOrDefault(s => s.Language == sourceLanguage && string.IsNullOrEmpty(s.Caption))

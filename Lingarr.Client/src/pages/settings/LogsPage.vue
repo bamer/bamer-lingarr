@@ -112,6 +112,35 @@ const filterOptions = ref<IFilterOptions>({
 })
 let eventSource: EventSource | null = null
 
+// ponytail: coalesce the SSE firehose per animation frame. The old code did
+// `logs.value = [...logs.value, entry]` + layout-forcing scrollToBottom on
+// EVERY message — O(n) copies that froze the whole tab during heavy passes.
+const MAX_LOGS = 1000
+let pendingLogs: ILogEntry[] = []
+let flushScheduled = false
+
+const flushLogs = async () => {
+    flushScheduled = false
+    if (pendingLogs.length === 0) return
+    logs.value.push(...pendingLogs)
+    pendingLogs = []
+    if (logs.value.length > MAX_LOGS) {
+        logs.value.splice(0, logs.value.length - MAX_LOGS)
+    }
+    await scrollToBottom()
+}
+
+const scheduleFlush = () => {
+    if (flushScheduled) return
+    flushScheduled = true
+    requestAnimationFrame(() => void flushLogs())
+}
+
+const queueLog = (entry: ILogEntry) => {
+    pendingLogs.push(entry)
+    scheduleFlush()
+}
+
 const filteredLogs = computed(() => {
     return logs.value.filter((log) => {
         if (filterOptions.value.logLevel !== 'all') {
@@ -177,6 +206,7 @@ const toggleAutoScroll = () => {
 
 const clearLogs = () => {
     logs.value = []
+    pendingLogs = []
 }
 
 const exportLogs = () => {
@@ -224,8 +254,7 @@ const setupEventSource = () => {
     eventSource.onmessage = (event) => {
         try {
             const logData = JSON.parse(event.data)
-            logs.value = [...logs.value, logData]
-            scrollToBottom()
+            queueLog(logData)
         } catch (error) {
             console.error('Error processing log entry:', error)
             console.error('Problematic data:', event.data)
@@ -240,7 +269,7 @@ const setupEventSource = () => {
                 stackTrace: error instanceof Error ? error.stack : undefined
             }
 
-            logs.value = [...logs.value, fallbackEntry]
+            queueLog(fallbackEntry)
         }
     }
 
