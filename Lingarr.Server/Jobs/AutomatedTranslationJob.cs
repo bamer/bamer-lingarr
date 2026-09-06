@@ -5,6 +5,7 @@ using Lingarr.Core.Enum;
 using Lingarr.Core.Interfaces;
 using Lingarr.Server.Filters;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.OpenApi.Extensions;
@@ -199,6 +200,10 @@ public class AutomatedTranslationJob
         var translationsInitiated = 0;
         var scannedMovies = 0;
         var index = currentIndex;
+        var skippedNoSubtitles = 0;
+        var skippedNoSource = 0;
+        var skippedUpToDate = 0;
+        var skippedTooRecent = 0;
 
         while (translationsInitiated < limit && scannedMovies < movies.Count)
         {
@@ -211,13 +216,26 @@ public class AutomatedTranslationJob
 
                 if (!ShouldProcessMedia(movie, MediaType.Movie, threshold))
                 {
+                    skippedTooRecent++;
                     continue;
                 }
 
-                var isProcessed = await _mediaSubtitleProcessor.ProcessMedia(movie, MediaType.Movie);
-                if (isProcessed)
+                var outcome = await _mediaSubtitleProcessor.ProcessMediaWithOutcome(movie, MediaType.Movie);
+                switch (outcome)
                 {
-                    translationsInitiated++;
+                    case MediaProcessOutcome.Processed:
+                        translationsInitiated++;
+                        break;
+                    case MediaProcessOutcome.SkippedNoSubtitles:
+                        skippedNoSubtitles++;
+                        break;
+                    case MediaProcessOutcome.SkippedNoSourceLanguage:
+                    case MediaProcessOutcome.SkippedInvalidMedia:
+                        skippedNoSource++;
+                        break;
+                    default:
+                        skippedUpToDate++;
+                        break;
                 }
             }
             catch (DirectoryNotFoundException)
@@ -239,6 +257,13 @@ public class AutomatedTranslationJob
 
         var newIndex = index % movies.Count;
         SetProcessingIndex(MovieProcessingIndexKey, newIndex);
+
+        _logger.LogInformation(
+            "Movies pass complete: {New} new translations, {Skipped} skipped " +
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            translationsInitiated,
+            skippedNoSubtitles + skippedNoSource + skippedUpToDate + skippedTooRecent,
+            skippedNoSubtitles, skippedNoSource, skippedUpToDate, skippedTooRecent);
 
         return translationsInitiated;
     }
@@ -284,6 +309,10 @@ public class AutomatedTranslationJob
         var translationsInitiated = 0;
         var scannedEpisodes = 0;
         var episodeIndex = currentIndex;
+        var skippedNoSubtitles = 0;
+        var skippedNoSource = 0;
+        var skippedUpToDate = 0;
+        var skippedTooRecent = 0;
 
         while (translationsInitiated < limit && scannedEpisodes < episodes.Count)
         {
@@ -302,13 +331,26 @@ public class AutomatedTranslationJob
 
                 if (!ShouldProcessMedia(episode, MediaType.Episode, threshold))
                 {
+                    skippedTooRecent++;
                     continue;
                 }
 
-                var isProcessed = await _mediaSubtitleProcessor.ProcessMedia(episode, MediaType.Episode);
-                if (isProcessed)
+                var outcome = await _mediaSubtitleProcessor.ProcessMediaWithOutcome(episode, MediaType.Episode);
+                switch (outcome)
                 {
-                    translationsInitiated++;
+                    case MediaProcessOutcome.Processed:
+                        translationsInitiated++;
+                        break;
+                    case MediaProcessOutcome.SkippedNoSubtitles:
+                        skippedNoSubtitles++;
+                        break;
+                    case MediaProcessOutcome.SkippedNoSourceLanguage:
+                    case MediaProcessOutcome.SkippedInvalidMedia:
+                        skippedNoSource++;
+                        break;
+                    default:
+                        skippedUpToDate++;
+                        break;
                 }
             }
             catch (DirectoryNotFoundException)
@@ -331,6 +373,13 @@ public class AutomatedTranslationJob
 
         var newIndex = episodeIndex % episodes.Count;
         SetProcessingIndex(ShowProcessingIndexKey, newIndex);
+
+        _logger.LogInformation(
+            "Episodes pass complete: {New} new translations, {Skipped} skipped " +
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            translationsInitiated,
+            skippedNoSubtitles + skippedNoSource + skippedUpToDate + skippedTooRecent,
+            skippedNoSubtitles, skippedNoSource, skippedUpToDate, skippedTooRecent);
 
         return translationsInitiated;
     }

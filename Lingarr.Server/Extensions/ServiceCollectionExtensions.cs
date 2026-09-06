@@ -168,6 +168,7 @@ public static class ServiceCollectionExtensions
         builder.Services.AddScoped<ITranslationRequestService, TranslationRequestService>();
         builder.Services.AddScoped<ITranslationRequestEventService, TranslationRequestEventService>();
         builder.Services.AddScoped<IMediaSubtitleProcessor, MediaSubtitleProcessor>();
+        builder.Services.AddScoped<ISubtitleLanguageDetector, SubtitleLanguageDetector>();
         builder.Services.AddScoped<IDirectoryService, DirectoryService>();
         builder.Services.AddScoped<IMappingService, MappingService>();
 

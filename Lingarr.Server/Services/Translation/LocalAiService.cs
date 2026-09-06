@@ -188,7 +188,7 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                     throw new TranslationException("Too many requests. Retry limit reached.", ex);
                 }
 
-et                 await Task.Delay(delay, linked.Token).ConfigureAwait(false);
+                await Task.Delay(delay, linked.Token).ConfigureAwait(false);
                 delay = TimeSpan.FromTicks(delay.Ticks * _retryDelayMultiplier);
 
                 _logger.LogWarning(
@@ -800,6 +800,54 @@ et                 await Task.Delay(delay, linked.Token).ConfigureAwait(false);
         }
 
         return chatResponse.Choices[0].Message.Content;
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> DetectLanguageAsync(string sampleText, CancellationToken cancellationToken)
+    {
+        await InitializeAsync("auto", "auto");
+        if (!_isChatEndpoint || string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_endpoint))
+        {
+            return null;
+        }
+
+        var prompt =
+            "Identify the spoken language of these subtitle lines. " +
+            "Reply with ONLY the ISO 639-1 two-letter language code " +
+            "(for example: en, fr, de, es, zu). No explanation, no punctuation.\n\n" +
+            sampleText;
+        var bodyJson = JsonSerializer.Serialize(new
+        {
+            model = _model,
+            messages = new[] { new { role = "user", content = prompt } },
+            stream = false,
+            temperature = 0
+        });
+
+        using var response = await _httpClient.PostAsync(
+            _endpoint,
+            new StringContent(bodyJson, Encoding.UTF8, "application/json"),
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return null;
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        ChatResponse? chatResponse;
+        try
+        {
+            chatResponse = JsonSerializer.Deserialize<ChatResponse>(responseBody);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        var content = chatResponse?.Choices is { Count: > 0 }
+            ? chatResponse.Choices[0].Message.Content
+            : null;
+        return string.IsNullOrWhiteSpace(content) ? null : content.Trim();
     }
 
     /// <summary>

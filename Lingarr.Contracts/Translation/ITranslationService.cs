@@ -23,6 +23,17 @@ public interface ITranslationService
         CancellationToken cancellationToken);
 
     /// <summary>
+    /// Identifies the ISO language code of a text sample (e.g. subtitle lines).
+    /// The default implementation reports "not supported" (null); providers with a
+    /// chat/completions endpoint may override it.
+    /// </summary>
+    /// <param name="sampleText">A few lines of text to identify.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The normalized language code, or null when unsupported or uncertain.</returns>
+    Task<string?> DetectLanguageAsync(string sampleText, CancellationToken cancellationToken) =>
+        Task.FromResult<string?>(null);
+
+    /// <summary>
     /// Returns the list of supported source languages and their available target languages.
     /// </summary>
     Task<List<SourceLanguage>> GetLanguages();

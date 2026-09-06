@@ -44,30 +44,39 @@ public class SubtitleService : ISubtitleService
             var subtitleFiles = files.Select(file =>
             {
                 var fileName = Path.GetFileNameWithoutExtension(file);
-                var parts = fileName.Split('.').Reverse().ToList();
+                var segments = fileName.Split('.');
                 var language = "";
                 var caption = "";
 
-                // First look for caption
-                var captionPart = parts.FirstOrDefault(p => SupportedCaptions.Contains(p.ToLower()));
-                if (captionPart != null)
+                // ponytail: only the trailing segments carry tags (basename[.lang][.caption]).
+                // Scanning every segment mislabels titles like "You.Are.So.Beautiful"
+                // ("So" is the Somali ISO code) or "It.2017" ("It" is Italian).
+                if (segments.Length >= 2)
                 {
-                    caption = captionPart.ToLower();
-                    parts.Remove(captionPart);
-                }
-
-                // Then look for language in remaining parts
-                var languagePart = parts.FirstOrDefault(p => TryGetLanguageByPart(p, out var code));
-                if (languagePart != null && TryGetLanguageByPart(languagePart, out var languageCode))
-                {
-                    language = languageCode;
-                    parts.Remove(languagePart);
-                }
-                // Hindi is an exception, if we didn't find a language, and we did found Hindi, We set that as language
-                else if (caption == "hi" && language == "")
-                {
-                    language = caption;
-                    caption = "";
+                    var last = segments[^1];
+                    if (SupportedCaptions.Contains(last.ToLower()))
+                    {
+                        caption = last.ToLower();
+                        if (segments.Length >= 3 && TryGetLanguageByPart(segments[^2], out var captionedLang))
+                        {
+                            language = captionedLang;
+                        }
+                        // Hindi is an exception, if we didn't find a language, and we did found Hindi, We set that as language
+                        else if (caption == "hi")
+                        {
+                            language = caption;
+                            caption = "";
+                        }
+                    }
+                    else if (TryGetLanguageByPart(last, out var languageCode))
+                    {
+                        language = languageCode;
+                        // Caption before language (non-standard but seen): movie.forced.en.srt
+                        if (segments.Length >= 3 && SupportedCaptions.Contains(segments[^2].ToLower()))
+                        {
+                            caption = segments[^2].ToLower();
+                        }
+                    }
                 }
 
                 return new Subtitles

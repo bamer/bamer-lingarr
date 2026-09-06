@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Lingarr.Contracts.Models;
 using Lingarr.Core.Configuration;
@@ -24,6 +25,7 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
     protected readonly Mock<ILogger<IMediaSubtitleProcessor>> LoggerMock;
     protected readonly Mock<ISubtitleService> SubtitleServiceMock;
     protected readonly Mock<ISettingService> SettingServiceMock;
+    protected readonly Mock<ISubtitleLanguageDetector> LanguageDetectorMock;
     protected readonly LingarrDbContext DbContext;
     protected readonly Lingarr.Server.Services.MediaSubtitleProcessor Processor;
 
@@ -33,6 +35,12 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
         LoggerMock = new Mock<ILogger<IMediaSubtitleProcessor>>();
         SubtitleServiceMock = new Mock<ISubtitleService>();
         SettingServiceMock = new Mock<ISettingService>();
+        LanguageDetectorMock = new Mock<ISubtitleLanguageDetector>();
+        LanguageDetectorMock
+            .Setup(d => d.DetectAndRenameUnknownSubtitlesAsync(
+                It.IsAny<List<Subtitles>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
 
         var options = new DbContextOptionsBuilder<LingarrDbContext>()
             .UseInMemoryDatabase(databaseName: System.Guid.NewGuid().ToString())
@@ -73,6 +81,7 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
             LoggerMock.Object,
             SettingServiceMock.Object,
             SubtitleServiceMock.Object,
+            LanguageDetectorMock.Object,
             DbContext);
     }
 

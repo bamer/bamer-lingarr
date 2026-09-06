@@ -18,6 +18,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     private readonly ILogger<IMediaSubtitleProcessor> _logger;
     private readonly ISubtitleService _subtitleService;
     private readonly ISettingService _settingService;
+    private readonly ISubtitleLanguageDetector _languageDetector;
     private readonly LingarrDbContext _dbContext;
     private string _hash = string.Empty;
     private IMedia _media = null!;
@@ -28,17 +29,27 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         ILogger<IMediaSubtitleProcessor> logger,
         ISettingService settingService,
         ISubtitleService subtitleService,
+        ISubtitleLanguageDetector languageDetector,
         LingarrDbContext dbContext)
     {
         _translationRequestService = translationRequestService;
         _settingService = settingService;
         _subtitleService = subtitleService;
+        _languageDetector = languageDetector;
         _dbContext = dbContext;
         _logger = logger;
     }
 
     /// <inheritdoc />
     public async Task<bool> ProcessMedia(
+        IMedia media,
+        MediaType mediaType)
+    {
+        return await ProcessMediaWithOutcome(media, mediaType) == MediaProcessOutcome.Processed;
+    }
+
+    /// <inheritdoc />
+    public async Task<MediaProcessOutcome> ProcessMediaWithOutcome(
         IMedia media, 
         MediaType mediaType)
     {
@@ -47,13 +58,31 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             _logger.LogWarning(
                 "Skipping media processing: Path or FileName is null for {MediaType} with ID {MediaId}",
                 mediaType, media.Id);
-            return false;
+            return MediaProcessOutcome.SkippedInvalidMedia;
         }
         
         var subtitles = await _subtitleService.GetSubtitles(media.Path, media.FileName);
         if (!subtitles.Any())
         {
-            return false;
+            _logger.LogDebug(
+                "Skipping media {FileName}: no subtitle files matched.",
+                media.FileName);
+            return MediaProcessOutcome.SkippedNoSubtitles;
+        }
+
+        // Untagged files violate the naming convention and can never match a source
+        // language — ask the AI to identify them and rename, then re-evaluate.
+        if (subtitles.Any(subtitle => string.IsNullOrEmpty(subtitle.Language)))
+        {
+            var renamed = await _languageDetector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+            if (renamed)
+            {
+                subtitles = await _subtitleService.GetSubtitles(media.Path, media.FileName);
+                if (!subtitles.Any())
+                {
+                    return MediaProcessOutcome.SkippedNoSubtitles;
+                }
+            }
         }
 
         var sourceLanguages = await GetLanguagesSetting<SourceLanguage>(SettingKeys.Translation.SourceLanguages);
@@ -78,7 +107,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
 
             if (hasActiveRequests)
             {
-                return false;
+                return MediaProcessOutcome.SkippedNothingToTranslate;
             }
 
             _logger.LogInformation(
@@ -97,8 +126,8 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     /// <param name="sourceLanguages">The source languages.</param>
     /// <param name="targetLanguages">The target languages.</param>
     /// <param name="ignoreCaptions">The ignore captions setting.</param>
-    /// <returns>True if new translation requests were created, false otherwise.</returns>
-    private async Task<bool> ProcessSubtitles(
+    /// <returns>The outcome: Processed when requests were created, otherwise the skip cause.</returns>
+    private async Task<MediaProcessOutcome> ProcessSubtitles(
         List<Subtitles> subtitles,
         HashSet<string> sourceLanguages,
         HashSet<string> targetLanguages,
@@ -109,7 +138,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             _logger.LogWarning(
                 "Source or target languages are empty. Source languages: {SourceCount}, Target languages: {TargetCount}",
                 sourceLanguages.Count, targetLanguages.Count);
-            return false;
+            return MediaProcessOutcome.SkippedNoSourceLanguage;
         }
 
         // ponytail: caption files (forced/SDH) count as "language present" so we don't
@@ -130,7 +159,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 string.Join(", ", sourceLanguages),
                 string.Join(", ", targetLanguages));
 
-            return false;
+            return MediaProcessOutcome.SkippedNoSourceLanguage;
         }
 
         var languagesToTranslate = targetLanguages.Except(selected.AvailableLanguages).ToList();
@@ -152,7 +181,10 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         languagesToTranslate = languagesToTranslate.Except(existingTranslationRequests).ToList();
         if (!languagesToTranslate.Any())
         {
-            return false;
+            _logger.LogDebug(
+                "Skipping media {FileName}: every target language is already present or requested.",
+                _media?.FileName);
+            return MediaProcessOutcome.SkippedNothingToTranslate;
         }
 
         foreach (var targetLanguage in languagesToTranslate)
@@ -174,7 +206,7 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
         }
 
         await UpdateHash();
-        return true;
+        return MediaProcessOutcome.Processed;
     }
 
     /// <summary>

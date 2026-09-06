@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.19.0] - 2026-09-06
+
+### Fixed
+- **Automation skipping titles with valid source subs** — Language tags are now read only from the trailing filename segments (`basename[.lang][.caption]`). Title words that collide with ISO codes (`So`→Somali in "You Are So Beautiful", `It`→Italian, `No`→Norwegian…) no longer mislabel untagged `.srt` files.
+- **Silent automation skips** — Every skip path now logs, and each movies/episodes pass ends with a summary (`X new translations, Y skipped (no subtitles, no source language, up to date, too recent)`).
+
+### Added
+- **AI language detection for untagged subtitles** — Files without a language tag get ~10 middle lines sent to the configured AI (new `DetectLanguageAsync` capability, implemented for LocalAI chat endpoints) which replies with the ISO code; the file is renamed to `basename.code.ext` so the same automation pass can queue it. Naming collisions are never overwritten.
+
 ## [2.18.0] - 2026-08-31
 
 ### Fixed
