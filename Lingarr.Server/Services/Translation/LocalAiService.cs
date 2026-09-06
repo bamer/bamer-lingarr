@@ -805,7 +805,9 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
     /// <inheritdoc />
     public async Task<string?> DetectLanguageAsync(string sampleText, CancellationToken cancellationToken)
     {
-        await InitializeAsync("auto", "auto");
+        // "en" is a placeholder: detection builds its own prompt and never uses
+        // the language replacements ("auto" would throw in GetCultureName).
+        await InitializeAsync("en", "en");
         if (!_isChatEndpoint || string.IsNullOrEmpty(_model) || string.IsNullOrEmpty(_endpoint))
         {
             return null;
