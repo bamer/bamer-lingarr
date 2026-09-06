@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.23.0] - 2026-09-06
+
+### Fixed
+- **Language detection sample duplicated every line** — The sample concatenated `PlaintextLines` + `Lines` (identical on plain SRT), sending 5 lines twice. Now sends up to 10 *distinct* lines (plaintext preferred).
+- **Silent detection failures** — Every outcome is now logged: too little text, per-service errors, and a final warning with the last model reply when no configured service identifies the file. Previously a `null` reply vanished without a trace.
+- **Detection falls back across services** — If the first configured service doesn't support detection (or fails), the next one is tried instead of giving up.
+
 ## [2.22.0] - 2026-09-06
 
 ### Fixed

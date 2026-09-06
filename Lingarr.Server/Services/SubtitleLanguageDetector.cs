@@ -55,10 +55,21 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
             "Found {Count} subtitle file(s) without a language tag, attempting AI language detection.",
             unknown.Count);
 
-        var service = await CreateDetectionServiceAsync();
-        if (service == null)
+        List<string> serviceNames;
+        try
         {
-            _logger.LogWarning("Skipping language detection: no usable translation service is configured.");
+            var raw = await _settingService.GetSetting(SettingKeys.Translation.ServiceType);
+            serviceNames = TranslationServices.Parse(raw);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read translation service settings for language detection.");
+            return false;
+        }
+
+        if (serviceNames.Count == 0)
+        {
+            _logger.LogWarning("Skipping language detection: no translation service is configured.");
             return false;
         }
 
@@ -67,7 +78,7 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
         {
             try
             {
-                var code = await DetectFileLanguageAsync(service, subtitle.Path, cancellationToken);
+                var code = await DetectFileLanguageAsync(serviceNames, subtitle.Path, cancellationToken);
                 if (code == null)
                 {
                     continue;
@@ -101,38 +112,8 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
         return renamedAny;
     }
 
-    private async Task<ITranslationService?> CreateDetectionServiceAsync()
-    {
-        List<string> serviceNames;
-        try
-        {
-            var raw = await _settingService.GetSetting(SettingKeys.Translation.ServiceType);
-            serviceNames = TranslationServices.Parse(raw);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not read translation service settings for language detection.");
-            return null;
-        }
-
-        if (serviceNames.Count == 0)
-        {
-            return null;
-        }
-
-        try
-        {
-            return _translationServiceFactory.CreateTranslationService(serviceNames[0]);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not create translation service for language detection.");
-            return null;
-        }
-    }
-
     private async Task<string?> DetectFileLanguageAsync(
-        ITranslationService service,
+        List<string> serviceNames,
         string filePath,
         CancellationToken cancellationToken)
     {
@@ -147,17 +128,22 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
             return null;
         }
 
-        // Sample from the middle: headers/credits at the edges carry little signal.
+        // Sample distinct lines from the middle: headers/credits at the edges carry
+        // little signal, and PlaintextLines already equals Lines on untagged files —
+        // concatenating both sent every line twice.
         var texts = items
             .Skip(Math.Max(0, items.Count / 2 - SampleLineCount / 2))
-            .SelectMany(item => item.PlaintextLines.Concat(item.Lines))
+            .SelectMany(item => item.PlaintextLines.Count > 0 ? item.PlaintextLines : item.Lines)
             .Select(line => line.Trim())
             .Where(line => line.Length > 1)
+            .Distinct()
             .Take(SampleLineCount)
             .ToList();
         if (texts.Count < 3)
         {
-            _logger.LogDebug("Not enough text in {File} for language detection.", filePath);
+            _logger.LogWarning(
+                "Not enough distinct text in {File} for language detection ({Count} lines).",
+                filePath, texts.Count);
             return null;
         }
 
@@ -167,26 +153,57 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
             sample = sample[..MaxSampleChars];
         }
 
-        string? reply;
-        try
+        // Try each configured service in order; the first usable code wins.
+        string? lastReply = null;
+        foreach (var serviceName in serviceNames)
         {
-            reply = await service.DetectLanguageAsync(sample, cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Language detection request failed for {File}.", filePath);
-            return null;
+            ITranslationService service;
+            try
+            {
+                service = _translationServiceFactory.CreateTranslationService(serviceName);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Could not create translation service '{Name}' for language detection.", serviceName);
+                continue;
+            }
+
+            string? reply;
+            try
+            {
+                reply = await service.DetectLanguageAsync(sample, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Language detection request failed for {File} ({Service}).", filePath, serviceName);
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(reply))
+            {
+                _logger.LogDebug("Service '{Service}' returned no language for {File}.", serviceName, filePath);
+                continue;
+            }
+
+            lastReply = reply;
+            var code = SanitizeLanguageCode(reply);
+            if (code != null)
+            {
+                return code;
+            }
         }
 
-        if (string.IsNullOrWhiteSpace(reply))
-        {
-            return null;
-        }
+        _logger.LogWarning(
+            "No configured translation service could identify the language of {File}. Last reply: {Reply}",
+            filePath, lastReply ?? "<none>");
+        return null;
+    }
 
+    private string? SanitizeLanguageCode(string reply)
+    {
         var token = LanguageCodeRegex().Match(reply.Trim().Trim('"', '\'', '`', '.', ')', '('));
         if (!token.Success)
         {
-            _logger.LogWarning("Language detection returned an unparsable reply for {File}: {Reply}", filePath, reply);
             return null;
         }
 
@@ -197,7 +214,6 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
         }
         catch (ArgumentException)
         {
-            _logger.LogWarning("Language detection returned an unknown code for {File}: {Reply}", filePath, reply);
             return null;
         }
 
