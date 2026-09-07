@@ -53,41 +53,24 @@ public class SubtitleRepairJobTests : IDisposable
             NullLogger<SubtitleRepairJob>.Instance);
     }
 
-    private static void WriteSource(string path)
+    private static void WriteSrt(string path, int cueCount)
     {
         var builder = new StringBuilder();
-        for (var i = 1; i <= 4; i++)
+        for (var i = 1; i <= cueCount; i++)
         {
             builder.AppendLine(i.ToString());
             builder.AppendLine($"00:00:{i:00},000 --> 00:00:{i + 1:00},000");
-            builder.AppendLine($"Source line {i}");
+            builder.AppendLine($"Line {i}");
             builder.AppendLine();
         }
         File.WriteAllText(path, builder.ToString());
     }
 
-    private async Task<Movie> AddMovieAsync(string fileName)
-    {
-        var movie = new Movie
-        {
-            RadarrId = 1,
-            Title = "Repair Test",
-            Path = _tempDirectory.Path,
-            FileName = fileName,
-            IncludeInTranslation = true,
-            DateAdded = DateTime.UtcNow
-        };
-        await _dbContext.Movies.AddAsync(movie);
-        await _dbContext.SaveChangesAsync();
-        return movie;
-    }
-
-    private async Task<TranslationRequest> AddRequestAsync(
-        int mediaId, string sourcePath, string translatedPath)
+    private async Task<TranslationRequest> AddRequestAsync(string sourcePath, string translatedPath)
     {
         var request = new TranslationRequest
         {
-            MediaId = mediaId,
+            MediaId = 1,
             Title = "Repair Test",
             SourceLanguage = "en",
             TargetLanguage = "th",
@@ -102,62 +85,47 @@ public class SubtitleRepairJobTests : IDisposable
     }
 
     [Fact]
-    public async Task Execute_BrokenFileWithDbLines_RebuildsFromDatabase()
+    public async Task Execute_BrokenTargetWithDbLines_RebuildsFromDatabase()
     {
         var sourcePath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
-        WriteSource(sourcePath);
+        WriteSrt(sourcePath, 4);
         var brokenPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
         await File.WriteAllTextAsync(brokenPath, string.Empty);
         File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
 
-        var movie = await AddMovieAsync("movie");
-        var request = await AddRequestAsync(movie.Id, sourcePath, brokenPath);
+        var request = await AddRequestAsync(sourcePath, brokenPath);
         await _dbContext.TranslationRequestLines.AddRangeAsync(
             Enumerable.Range(1, 4).Select(i => new TranslationRequestLine
             {
                 TranslationRequestId = request.Id,
                 Position = i,
-                Source = $"Source line {i}",
-                Target = $"Ligne traduite {i}"
+                Source = $"Line {i}",
+                Target = $"Traduit {i}"
             }));
         await _dbContext.SaveChangesAsync();
 
         await CreateJob().Execute();
 
         var rebuilt = await File.ReadAllTextAsync(brokenPath);
-        Assert.Contains("Ligne traduite 1", rebuilt);
-        Assert.Contains("Ligne traduite 4", rebuilt);
+        Assert.Contains("Traduit 1", rebuilt);
+        Assert.Contains("Traduit 4", rebuilt);
     }
 
     [Fact]
-    public async Task Execute_BrokenFileWithoutRequest_DeletesCorpse()
-    {
-        var brokenPath = Path.Combine(_tempDirectory.Path, "orphan.th.srt");
-        await File.WriteAllTextAsync(brokenPath, string.Empty);
-        File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
-        await AddMovieAsync("orphan");
-
-        await CreateJob().Execute();
-
-        Assert.False(File.Exists(brokenPath));
-    }
-
-    [Fact]
-    public async Task Execute_BrokenFileWithOnlyBlankDbLines_DeletesCorpse()
+    public async Task Execute_BrokenTargetWithoutUsableLines_DeletesCorpse()
     {
         var sourcePath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
-        WriteSource(sourcePath);
+        WriteSrt(sourcePath, 2);
         var brokenPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
         await File.WriteAllTextAsync(brokenPath, string.Empty);
         File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
 
-        var movie = await AddMovieAsync("movie");
-        var request = await AddRequestAsync(movie.Id, sourcePath, brokenPath);
+        var request = await AddRequestAsync(sourcePath, brokenPath);
         await _dbContext.TranslationRequestLines.AddAsync(new TranslationRequestLine
         {
             TranslationRequestId = request.Id,
             Position = 1,
-            Source = "Source line 1",
+            Source = "Line 1",
             Target = "  "
         });
         await _dbContext.SaveChangesAsync();
@@ -168,29 +136,92 @@ public class SubtitleRepairJobTests : IDisposable
     }
 
     [Fact]
-    public async Task Execute_HealthyFile_LeftUntouched()
+    public async Task Execute_BrokenSource_DeletesSourceFile()
     {
         var sourcePath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
-        WriteSource(sourcePath);
-        await AddMovieAsync("movie");
+        await File.WriteAllTextAsync(sourcePath, string.Empty);
+        File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddHours(-1));
+        var translatedPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
+        WriteSrt(translatedPath, 4);
 
-        var before = File.GetLastWriteTimeUtc(sourcePath);
+        await AddRequestAsync(sourcePath, translatedPath);
+
         await CreateJob().Execute();
 
-        Assert.Equal(before, File.GetLastWriteTimeUtc(sourcePath));
+        Assert.False(File.Exists(sourcePath));
+    }
+
+    [Fact]
+    public async Task Execute_HealthyTarget_LeftUntouched()
+    {
+        var sourcePath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
+        WriteSrt(sourcePath, 4);
+        var healthyPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
+        WriteSrt(healthyPath, 4);
+        File.SetLastWriteTimeUtc(healthyPath, DateTime.UtcNow.AddHours(-1));
+
+        await AddRequestAsync(sourcePath, healthyPath);
+
+        var before = File.GetLastWriteTimeUtc(healthyPath);
+        await CreateJob().Execute();
+
+        Assert.Equal(before, File.GetLastWriteTimeUtc(healthyPath));
     }
 
     [Fact]
     public async Task Execute_RecentlyWrittenBrokenFile_Skipped()
     {
-        var brokenPath = Path.Combine(_tempDirectory.Path, "fresh.th.srt");
-        await File.WriteAllTextAsync(brokenPath, string.Empty);
-        await AddMovieAsync("fresh");
+        var sourcePath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
+        WriteSrt(sourcePath, 2);
+        var freshPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
+        await File.WriteAllTextAsync(freshPath, string.Empty);
+
+        await AddRequestAsync(sourcePath, freshPath);
 
         await CreateJob().Execute();
 
-        // Still there: may be mid-write by a running translation.
-        Assert.True(File.Exists(brokenPath));
+        Assert.True(File.Exists(freshPath));
+    }
+
+    [Fact]
+    public async Task Execute_FileNotInDb_NotScanned()
+    {
+        var orphanPath = Path.Combine(_tempDirectory.Path, "orphan.fr.srt");
+        await File.WriteAllTextAsync(orphanPath, string.Empty);
+        File.SetLastWriteTimeUtc(orphanPath, DateTime.UtcNow.AddHours(-1));
+
+        await CreateJob().Execute();
+
+        Assert.True(File.Exists(orphanPath));
+    }
+
+    [Fact]
+    public async Task Execute_ReverseDirection_RebuildsTarget()
+    {
+        // Translate from French to English: fr is source, en is target.
+        // Broken en.srt should be rebuilt from the request lines.
+        var sourcePath = Path.Combine(_tempDirectory.Path, "movie.fr.srt");
+        WriteSrt(sourcePath, 3);
+        var brokenPath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
+        await File.WriteAllTextAsync(brokenPath, string.Empty);
+        File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
+
+        var request = await AddRequestAsync(sourcePath, brokenPath);
+        await _dbContext.TranslationRequestLines.AddRangeAsync(
+            Enumerable.Range(1, 3).Select(i => new TranslationRequestLine
+            {
+                TranslationRequestId = request.Id,
+                Position = i,
+                Source = $"Ligne {i}",
+                Target = $"Translated line {i}"
+            }));
+        await _dbContext.SaveChangesAsync();
+
+        await CreateJob().Execute();
+
+        var rebuilt = await File.ReadAllTextAsync(brokenPath);
+        Assert.Contains("Translated line 1", rebuilt);
+        Assert.Contains("Translated line 3", rebuilt);
     }
 
     private sealed class TempDirectory : IDisposable
