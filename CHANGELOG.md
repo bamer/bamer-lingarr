@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.25.0] - 2026-09-08
+
+### Fixed
+- **SubtitleRepairJob rewritten** — Directories now derived from Movies/Episodes (permanent, not cleaned up). Paths and lines loaded separately so requests with 0 lines are still tracked. Broken source files are deleted, broken targets rebuilt from DB lines. Files with no DB data left untouched.
+
 ## [2.24.4] - 2026-09-07
 
 ### Fixed

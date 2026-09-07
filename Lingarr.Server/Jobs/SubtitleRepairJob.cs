@@ -13,11 +13,10 @@ namespace Lingarr.Server.Jobs;
 /// One-shot maintenance, triggered manually from the Schedule page: finds subtitle
 /// files that parse to zero cues (0-byte or all-blank) and either rebuilds them
 /// from the translation lines in the database or deletes the corpse. Logs a
-/// summary; never touches healthy files.
+/// summary; never touches healthy files or files without DB data to rebuild from.
 /// </summary>
 public class SubtitleRepairJob
 {
-    // A file modified moments ago may be mid-write by a running translation.
     private static readonly TimeSpan RecentWriteGrace = TimeSpan.FromMinutes(10);
 
     private readonly LingarrDbContext _dbContext;
@@ -44,54 +43,67 @@ public class SubtitleRepairJob
         var jobName = JobContextFilter.GetCurrentJobTypeName();
         await _scheduleService.UpdateJobState(jobName, JobStatus.Processing.GetDisplayName());
 
-        // Derive scan directories from the translation requests themselves:
-        // every SubtitleToTranslate/TranslatedSubtitle path tells us where the
-        // media folder is.  This avoids depending on Movies/Episodes tables.
-        var allPaths = await _dbContext.TranslationRequests
-            .Where(r => r.SubtitleToTranslate != null || r.TranslatedSubtitle != null)
-            .Select(r => new { r.SubtitleToTranslate, r.TranslatedSubtitle })
-            .ToListAsync();
+        // Scan directories come from Movies + Episodes (permanent data).
+        var directories = await _dbContext.Movies
+                .Where(m => m.Path != null)
+                .Select(m => m.Path!)
+                .Concat(_dbContext.Episodes
+                    .Where(e => e.Path != null)
+                    .Select(e => e.Path!))
+                .Distinct()
+                .ToListAsync();
 
-        var directories = allPaths
-            .SelectMany(r => new[] { r.SubtitleToTranslate, r.TranslatedSubtitle })
-            .Where(p => !string.IsNullOrEmpty(p))
-            .Select(p => Path.GetDirectoryName(p)!)
-            .Where(d => !string.IsNullOrEmpty(d))
-            .Distinct()
-            .ToList();
-
-        _logger.LogWarning(
-            "Subtitle repair: {RequestCount} requests loaded, {DirCount} directories to scan: [{Dirs}].",
-            allPaths.Count, directories.Count, string.Join(", ", directories));
-
-        // Pre-load all translation request paths for fast in-memory lookup.
-        var knownPaths = await _dbContext.TranslationRequests
+        // Load request metadata (paths) and lines separately, then merge.
+        // The join alone drops requests with 0 lines — those still need their
+        // SubtitleToTranslate / TranslatedSubtitle registered.
+        var requests = await _dbContext.TranslationRequests
             .Where(r => r.SubtitleToTranslate != null || r.TranslatedSubtitle != null)
             .Select(r => new { r.Id, r.SubtitleToTranslate, r.TranslatedSubtitle })
             .ToListAsync();
 
-        // Build a map: file path → request that owns it.
-        // Both SubtitleToTranslate and TranslatedSubtitle are registered so the
-        // scan detects broken files regardless of source/target role.
-        var pathToRequest = new Dictionary<string, (int RequestId, bool IsTarget)>(StringComparer.OrdinalIgnoreCase);
-        foreach (var r in knownPaths)
+        var linesQuery = await (
+            from line in _dbContext.TranslationRequestLines
+            join req in _dbContext.TranslationRequests
+                on line.TranslationRequestId equals req.Id
+            select new { req.Id, line.Position, line.Target })
+            .ToListAsync();
+
+        // Build: filePath → (requestId, isTarget)
+        var pathToRequest = new Dictionary<string, RepairContext>(StringComparer.OrdinalIgnoreCase);
+        // Build: requestId → lines
+        var requestLines = new Dictionary<int, Dictionary<int, string>>();
+        // Build: requestId → source path
+        var requestSources = new Dictionary<int, string>();
+
+        foreach (var r in requests)
         {
+            requestSources[r.Id] = r.SubtitleToTranslate ?? "";
+
             if (!string.IsNullOrEmpty(r.SubtitleToTranslate))
-            {
-                pathToRequest[r.SubtitleToTranslate] = (r.Id, IsTarget: false);
-            }
+                pathToRequest[r.SubtitleToTranslate] = new RepairContext { RequestId = r.Id, IsTarget = false };
+
             if (!string.IsNullOrEmpty(r.TranslatedSubtitle))
-            {
-                // Overwrite: translated takes priority over source for the same file.
-                pathToRequest[r.TranslatedSubtitle] = (r.Id, IsTarget: true);
-            }
+                pathToRequest[r.TranslatedSubtitle] = new RepairContext { RequestId = r.Id, IsTarget = true };
         }
+
+        foreach (var row in linesQuery)
+        {
+            if (!requestLines.ContainsKey(row.Id))
+                requestLines[row.Id] = new Dictionary<int, string>();
+            requestLines[row.Id][row.Position] = row.Target;
+        }
+
+        _logger.LogInformation(
+            "Subtitle repair: {DirCount} directories, {PathCount} tracked paths.",
+            directories.Count, pathToRequest.Count);
 
         var scanned = 0;
         var repaired = 0;
         var deleted = 0;
         var skippedRecent = 0;
         var healthy = 0;
+        var untracked = 0;
+
         foreach (var directory in directories)
         {
             string[] files;
@@ -108,176 +120,145 @@ public class SubtitleRepairJob
             foreach (var file in files)
             {
                 scanned++;
-                if (!pathToRequest.TryGetValue(file, out var match))
+
+                List<SubtitleItem> parsed;
+                try
                 {
+                    parsed = await _subtitleService.ReadSubtitles(file);
+                }
+                catch
+                {
+                    parsed = [];
+                }
+
+                if (parsed.Count > 0)
+                {
+                    healthy++;
                     continue;
                 }
 
-                switch (await RepairFileAsync(file, match.RequestId, match.IsTarget))
+                // File is broken (0 cues). Can we rebuild it?
+                if (!pathToRequest.TryGetValue(file, out var ctx))
                 {
-                    case RepairOutcome.Repaired:
-                        repaired++;
-                        break;
-                    case RepairOutcome.Deleted:
-                        deleted++;
-                        break;
-                    case RepairOutcome.SkippedRecent:
-                        skippedRecent++;
-                        break;
-                    case RepairOutcome.Healthy:
-                        healthy++;
-                        break;
+                    untracked++;
+                    continue; // No DB data → leave untouched
                 }
+
+                // Recently written? Skip — may be mid-flight.
+                try
+                {
+                    var info = new FileInfo(file);
+                    if (DateTime.UtcNow - info.LastWriteTimeUtc < RecentWriteGrace)
+                    {
+                        skippedRecent++;
+                        continue;
+                    }
+                }
+                catch
+                {
+                    // File vanished between parse and stat — skip.
+                    continue;
+                }
+
+                if (!ctx.IsTarget)
+                {
+                    DeleteCorpse(file, $"source file broken, cannot rebuild (request {ctx.RequestId})");
+                    deleted++;
+                    continue;
+                }
+
+                if (!requestLines.TryGetValue(ctx.RequestId, out var lines) ||
+                    !requestSources.TryGetValue(ctx.RequestId, out var sourcePath))
+                {
+                    untracked++;
+                    continue;
+                }
+
+                var usable = lines
+                    .Where(kv => !string.IsNullOrWhiteSpace(kv.Value))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+                if (usable.Count == 0)
+                {
+                    DeleteCorpse(file, $"request {ctx.RequestId} has no usable lines");
+                    deleted++;
+                    continue;
+                }
+
+                List<SubtitleItem> sourceItems;
+                try
+                {
+                    sourceItems = await _subtitleService.ReadSubtitles(sourcePath);
+                }
+                catch
+                {
+                    DeleteCorpse(file, $"source {sourcePath} unreadable");
+                    deleted++;
+                    continue;
+                }
+
+                if (sourceItems.Count == 0)
+                {
+                    DeleteCorpse(file, $"source {sourcePath} is empty");
+                    deleted++;
+                    continue;
+                }
+
+                var rebuilt = sourceItems.Select(source => new SubtitleItem
+                {
+                    Position = source.Position,
+                    StartTime = source.StartTime,
+                    EndTime = source.EndTime,
+                    Lines = new List<string>(source.Lines),
+                    PlaintextLines = new List<string>(source.PlaintextLines),
+                    TranslatedLines = usable.TryGetValue(source.Position, out var target)
+                        ? [target]
+                        : new List<string>(source.Lines)
+                }).ToList();
+
+                try
+                {
+                    await _subtitleService.WriteSubtitles(file, rebuilt, stripSubtitleFormatting: false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Subtitle repair: rebuild of {File} failed.", file);
+                    continue;
+                }
+
+                List<SubtitleItem> verify;
+                try
+                {
+                    verify = await _subtitleService.ReadSubtitles(file);
+                }
+                catch
+                {
+                    verify = [];
+                }
+
+                if (verify.Count == 0)
+                {
+                    _logger.LogWarning("Subtitle repair: rebuilt {File} still parses to zero cues.", file);
+                    continue;
+                }
+
+                repaired++;
+                _logger.LogInformation(
+                    "Subtitle repair: rebuilt {File} with {Cues} cues from request {RequestId}.",
+                    file, verify.Count, ctx.RequestId);
             }
         }
 
         _logger.LogInformation(
-            "Subtitle repair complete: {Scanned} files scanned, {Healthy} healthy, {Repaired} rebuilt, {Deleted} corpses deleted, {Skipped} skipped (recently written).",
-            scanned, healthy, repaired, deleted, skippedRecent);
+            "Subtitle repair complete: {Scanned} scanned, {Healthy} healthy, {Repaired} rebuilt, {Deleted} deleted, {Skipped} skipped (recent), {Untracked} untracked.",
+            scanned, healthy, repaired, deleted, skippedRecent, untracked);
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());
     }
 
-    private enum RepairOutcome
+    private sealed class RepairContext
     {
-        Healthy,
-        Repaired,
-        Deleted,
-        SkippedRecent,
-        Failed
-    }
-
-    private async Task<RepairOutcome> RepairFileAsync(string filePath, int requestId, bool isTarget)
-    {
-        FileInfo info;
-        try
-        {
-            info = new FileInfo(filePath);
-            if (!info.Exists)
-            {
-                return RepairOutcome.Healthy;
-            }
-            if (DateTime.UtcNow - info.LastWriteTimeUtc < RecentWriteGrace)
-            {
-                return RepairOutcome.SkippedRecent;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Subtitle repair: cannot inspect {File}.", filePath);
-            return RepairOutcome.Failed;
-        }
-
-        List<SubtitleItem> parsed;
-        try
-        {
-            parsed = await _subtitleService.ReadSubtitles(filePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Subtitle repair: cannot read {File}.", filePath);
-            return RepairOutcome.Failed;
-        }
-
-        if (parsed.Count > 0)
-        {
-            return RepairOutcome.Healthy;
-        }
-
-        // Source file (SubtitleToTranslate): request lines store the translation
-        // output, not the source text, so we cannot rebuild it — just delete.
-        if (!isTarget)
-        {
-            DeleteCorpse(filePath, $"source file broken, cannot rebuild (request {requestId})");
-            return RepairOutcome.Deleted;
-        }
-
-        var usable = (await _dbContext.TranslationRequestLines
-                .Where(line => line.TranslationRequestId == requestId)
-                .ToListAsync())
-            .GroupBy(line => line.Position)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderByDescending(line => line.Id).First().Target)
-            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
-            .ToDictionary(pair => pair.Key, pair => pair.Value);
-
-        if (usable.Count == 0)
-        {
-            DeleteCorpse(filePath, $"request {requestId} has no usable lines in the database");
-            return RepairOutcome.Deleted;
-        }
-
-        // Need the source subtitle to reconstruct timings + missing positions.
-        var sourcePath = await _dbContext.TranslationRequests
-            .Where(r => r.Id == requestId)
-            .Select(r => r.SubtitleToTranslate)
-            .FirstOrDefaultAsync();
-
-        List<SubtitleItem> sourceItems;
-        try
-        {
-            sourceItems = string.IsNullOrEmpty(sourcePath)
-                ? []
-                : await _subtitleService.ReadSubtitles(sourcePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Subtitle repair: source {Source} for request {RequestId} unreadable, deleting {File}.",
-                sourcePath, requestId, filePath);
-            DeleteCorpse(filePath, "source subtitle is gone");
-            return RepairOutcome.Deleted;
-        }
-
-        if (sourceItems.Count == 0)
-        {
-            DeleteCorpse(filePath, $"source subtitle for request {requestId} is empty");
-            return RepairOutcome.Deleted;
-        }
-
-        var rebuilt = sourceItems.Select(source => new SubtitleItem
-        {
-            Position = source.Position,
-            StartTime = source.StartTime,
-            EndTime = source.EndTime,
-            Lines = new List<string>(source.Lines),
-            PlaintextLines = new List<string>(source.PlaintextLines),
-            TranslatedLines = usable.TryGetValue(source.Position, out var target)
-                ? [target]
-                : new List<string>(source.Lines)
-        }).ToList();
-
-        try
-        {
-            await _subtitleService.WriteSubtitles(filePath, rebuilt, stripSubtitleFormatting: false);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Subtitle repair: rebuild of {File} failed.", filePath);
-            return RepairOutcome.Failed;
-        }
-
-        List<SubtitleItem> verify;
-        try
-        {
-            verify = await _subtitleService.ReadSubtitles(filePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Subtitle repair: cannot verify rebuilt {File}.", filePath);
-            return RepairOutcome.Failed;
-        }
-
-        if (verify.Count == 0)
-        {
-            _logger.LogWarning("Subtitle repair: rebuilt {File} still parses to zero cues.", filePath);
-            return RepairOutcome.Failed;
-        }
-
-        _logger.LogInformation(
-            "Subtitle repair: rebuilt {File} with {Cues} cues from request {RequestId}.",
-            filePath, verify.Count, requestId);
-        return RepairOutcome.Repaired;
+        public int RequestId { get; init; }
+        public bool IsTarget { get; init; }
     }
 
     private void DeleteCorpse(string filePath, string reason)

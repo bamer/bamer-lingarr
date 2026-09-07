@@ -66,6 +66,21 @@ public class SubtitleRepairJobTests : IDisposable
         File.WriteAllText(path, builder.ToString());
     }
 
+    private async Task SeedMovieDirectoryAsync()
+    {
+        var movie = new Movie
+        {
+            RadarrId = 1,
+            Title = "Repair Test",
+            Path = _tempDirectory.Path,
+            FileName = "movie",
+            IncludeInTranslation = true,
+            DateAdded = DateTime.UtcNow
+        };
+        await _dbContext.Movies.AddAsync(movie);
+        await _dbContext.SaveChangesAsync();
+    }
+
     private async Task<TranslationRequest> AddRequestAsync(string sourcePath, string translatedPath)
     {
         var request = new TranslationRequest
@@ -93,6 +108,7 @@ public class SubtitleRepairJobTests : IDisposable
         await File.WriteAllTextAsync(brokenPath, string.Empty);
         File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
 
+        await SeedMovieDirectoryAsync();
         var request = await AddRequestAsync(sourcePath, brokenPath);
         await _dbContext.TranslationRequestLines.AddRangeAsync(
             Enumerable.Range(1, 4).Select(i => new TranslationRequestLine
@@ -120,6 +136,7 @@ public class SubtitleRepairJobTests : IDisposable
         await File.WriteAllTextAsync(brokenPath, string.Empty);
         File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
 
+        await SeedMovieDirectoryAsync();
         var request = await AddRequestAsync(sourcePath, brokenPath);
         await _dbContext.TranslationRequestLines.AddAsync(new TranslationRequestLine
         {
@@ -144,6 +161,7 @@ public class SubtitleRepairJobTests : IDisposable
         var translatedPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
         WriteSrt(translatedPath, 4);
 
+        await SeedMovieDirectoryAsync();
         await AddRequestAsync(sourcePath, translatedPath);
 
         await CreateJob().Execute();
@@ -160,6 +178,7 @@ public class SubtitleRepairJobTests : IDisposable
         WriteSrt(healthyPath, 4);
         File.SetLastWriteTimeUtc(healthyPath, DateTime.UtcNow.AddHours(-1));
 
+        await SeedMovieDirectoryAsync();
         await AddRequestAsync(sourcePath, healthyPath);
 
         var before = File.GetLastWriteTimeUtc(healthyPath);
@@ -176,6 +195,7 @@ public class SubtitleRepairJobTests : IDisposable
         var freshPath = Path.Combine(_tempDirectory.Path, "movie.th.srt");
         await File.WriteAllTextAsync(freshPath, string.Empty);
 
+        await SeedMovieDirectoryAsync();
         await AddRequestAsync(sourcePath, freshPath);
 
         await CreateJob().Execute();
@@ -190,6 +210,8 @@ public class SubtitleRepairJobTests : IDisposable
         await File.WriteAllTextAsync(orphanPath, string.Empty);
         File.SetLastWriteTimeUtc(orphanPath, DateTime.UtcNow.AddHours(-1));
 
+        await SeedMovieDirectoryAsync();
+
         await CreateJob().Execute();
 
         Assert.True(File.Exists(orphanPath));
@@ -198,14 +220,13 @@ public class SubtitleRepairJobTests : IDisposable
     [Fact]
     public async Task Execute_ReverseDirection_RebuildsTarget()
     {
-        // Translate from French to English: fr is source, en is target.
-        // Broken en.srt should be rebuilt from the request lines.
         var sourcePath = Path.Combine(_tempDirectory.Path, "movie.fr.srt");
         WriteSrt(sourcePath, 3);
         var brokenPath = Path.Combine(_tempDirectory.Path, "movie.en.srt");
         await File.WriteAllTextAsync(brokenPath, string.Empty);
         File.SetLastWriteTimeUtc(brokenPath, DateTime.UtcNow.AddHours(-1));
 
+        await SeedMovieDirectoryAsync();
         var request = await AddRequestAsync(sourcePath, brokenPath);
         await _dbContext.TranslationRequestLines.AddRangeAsync(
             Enumerable.Range(1, 3).Select(i => new TranslationRequestLine
