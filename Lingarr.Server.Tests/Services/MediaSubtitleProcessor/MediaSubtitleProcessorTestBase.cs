@@ -28,6 +28,7 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
     protected readonly Mock<ISubtitleLanguageDetector> LanguageDetectorMock;
     protected readonly LingarrDbContext DbContext;
     protected readonly Lingarr.Server.Services.MediaSubtitleProcessor Processor;
+    private readonly TemporaryDirectory _mediaDirectory;
 
     protected MediaSubtitleProcessorTestBase()
     {
@@ -46,6 +47,10 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
             .UseInMemoryDatabase(databaseName: System.Guid.NewGuid().ToString())
             .Options;
         DbContext = new LingarrDbContext(options);
+
+        // ponytail: real directory — ProcessMediaWithOutcome pre-checks that the
+        // media path exists and skips stale entries before anything else.
+        _mediaDirectory = new TemporaryDirectory();
 
         SubtitleServiceMock
             .Setup(s => s.SelectSourceSubtitle(
@@ -93,7 +98,7 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
             Id = 1,
             RadarrId = 1,
             Title = "Test Movie",
-            Path = "/movies/test",
+            Path = _mediaDirectory.FullName,
             FileName = fileName,
             MediaHash = null,
             DateAdded = System.DateTime.UtcNow
@@ -121,6 +126,32 @@ public abstract class MediaSubtitleProcessorTestBase : IDisposable
     public void Dispose()
     {
         DbContext?.Dispose();
+        _mediaDirectory?.Dispose();
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Real temporary directory that backs <see cref="CreateTestMovie"/> paths so
+    /// the missing-directory pre-check does not skip every test media.
+    /// </summary>
+    protected sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            FullName = System.IO.Directory.CreateTempSubdirectory().FullName;
+        }
+
+        public string FullName { get; }
+
+        public void Dispose()
+        {
+            try
+            {
+                System.IO.Directory.Delete(FullName, recursive: true);
+            }
+            catch (System.IO.DirectoryNotFoundException)
+            {
+            }
+        }
     }
 }

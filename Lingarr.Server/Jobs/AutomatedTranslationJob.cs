@@ -1,11 +1,15 @@
 ﻿using Hangfire;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
+using Lingarr.Core.Entities;
 using Lingarr.Core.Enum;
 using Lingarr.Core.Interfaces;
 using Lingarr.Server.Filters;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Interfaces.Services.Integration;
+using Lingarr.Server.Interfaces.Services.Sync;
 using Lingarr.Server.Models;
+using Lingarr.Server.Models.Integrations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.OpenApi.Extensions;
@@ -20,6 +24,10 @@ public class AutomatedTranslationJob
     private readonly ISettingService _settingService;
     private readonly IScheduleService _scheduleService;
     private readonly IMemoryCache _memoryCache;
+    private readonly IRadarrService _radarrService;
+    private readonly ISonarrService _sonarrService;
+    private readonly IMovieSyncService _movieSyncService;
+    private readonly IShowSyncService _showSyncService;
     private int _maxTranslationsPerRun = 10;
     private TimeSpan _defaultMovieAgeThreshold;
     private TimeSpan _defaultShowAgeThreshold;
@@ -27,13 +35,22 @@ public class AutomatedTranslationJob
     private const string MovieProcessingIndexKey = "Automation:MovieProcessingIndex";
     private const string ShowProcessingIndexKey = "Automation:ShowProcessingIndex";
 
+    // ponytail: self-healing cap — a whole missing mount would otherwise fire one
+    // Radarr/Sonarr API resync per media. Beyond the cap the entries are only
+    // counted; the next scheduled sync (or a fixed mount) resolves the rest.
+    private const int MaxResyncsPerRun = 25;
+
     public AutomatedTranslationJob(
         LingarrDbContext dbContext,
         ILogger<AutomatedTranslationJob> logger,
         IMediaSubtitleProcessor mediaSubtitleProcessor,
         IScheduleService scheduleService,
         ISettingService settingService,
-        IMemoryCache memoryCache)
+        IMemoryCache memoryCache,
+        IRadarrService radarrService,
+        ISonarrService sonarrService,
+        IMovieSyncService movieSyncService,
+        IShowSyncService showSyncService)
     {
         _dbContext = dbContext;
         _logger = logger;
@@ -41,6 +58,10 @@ public class AutomatedTranslationJob
         _scheduleService = scheduleService;
         _mediaSubtitleProcessor = mediaSubtitleProcessor;
         _memoryCache = memoryCache;
+        _radarrService = radarrService;
+        _sonarrService = sonarrService;
+        _movieSyncService = movieSyncService;
+        _showSyncService = showSyncService;
     }
 
     // ponytail: local gate instead of [DisableConcurrentExecution] — single-instance
@@ -167,15 +188,15 @@ public class AutomatedTranslationJob
         _logger.LogInformation(
             "Automation run complete: {New} new translations, {Scanned}/{Total} scanned " +
             "({MovieItems} movies + {EpisodeItems} episodes), {Skipped} skipped " +
-            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}), " +
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}, missing directory: {MissingPath}), " +
             "{Excluded} excluded by the IncludeInTranslation flag (not part of the scanned/total figures).",
             total.New,
             total.Scanned,
             total.Total,
             movieStats.Total,
             showStats.Total,
-            total.NoSubtitles + total.NoSource + total.Unknown + total.UpToDate + total.TooRecent,
-            total.NoSubtitles, total.NoSource, total.Unknown, total.UpToDate, total.TooRecent,
+            total.NoSubtitles + total.NoSource + total.Unknown + total.UpToDate + total.TooRecent + total.MissingPath,
+            total.NoSubtitles, total.NoSource, total.Unknown, total.UpToDate, total.TooRecent, total.MissingPath,
             total.Excluded);
 
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());
@@ -271,6 +292,8 @@ public class AutomatedTranslationJob
         var skippedUnknown = 0;
         var skippedUpToDate = 0;
         var skippedTooRecent = 0;
+        var skippedMissingPath = 0;
+        var moviesWithMissingPath = new List<Movie>();
 
         while (translationsInitiated < limit && scannedMovies < movies.Count)
         {
@@ -295,6 +318,10 @@ public class AutomatedTranslationJob
                         break;
                     case MediaProcessOutcome.SkippedNoSubtitles:
                         skippedNoSubtitles++;
+                        break;
+                    case MediaProcessOutcome.SkippedMissingDirectory:
+                        skippedMissingPath++;
+                        moviesWithMissingPath.Add(movie);
                         break;
                     case MediaProcessOutcome.SkippedUnknownLanguage:
                         skippedUnknown++;
@@ -325,17 +352,21 @@ public class AutomatedTranslationJob
             }
         }
 
+        // ponytail: self-heal stale entries — resync the movie against Radarr so a
+        // moved/renamed path is refreshed; a movie gone from Radarr loses its row.
+        await ResyncMoviesWithMissingPaths(moviesWithMissingPath);
+
         var newIndex = index % movies.Count;
         SetProcessingIndex(MovieProcessingIndexKey, newIndex);
 
         _logger.LogInformation(
             "Movies pass complete: {New} new translations, {Scanned}/{Total} scanned, {Skipped} skipped " +
-            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}, missing directory: {MissingPath}).",
             translationsInitiated,
             scannedMovies,
             movies.Count,
-            skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent,
-            skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent);
+            skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent + skippedMissingPath,
+            skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent, skippedMissingPath);
 
         return new AutomationPassStats(
             translationsInitiated,
@@ -346,7 +377,8 @@ public class AutomatedTranslationJob
             skippedUnknown,
             skippedUpToDate,
             skippedTooRecent,
-            excludedMovies);
+            excludedMovies,
+            skippedMissingPath);
     }
 
     private async Task<AutomationPassStats> ProcessShows(int limit)
@@ -407,6 +439,8 @@ public class AutomatedTranslationJob
         var skippedUnknown = 0;
         var skippedUpToDate = 0;
         var skippedTooRecent = 0;
+        var skippedMissingPath = 0;
+        var showsWithMissingPath = new List<Show>();
 
         while (translationsInitiated < limit && scannedEpisodes < episodes.Count)
         {
@@ -438,6 +472,14 @@ public class AutomatedTranslationJob
                     case MediaProcessOutcome.SkippedNoSubtitles:
                         skippedNoSubtitles++;
                         break;
+                    case MediaProcessOutcome.SkippedMissingDirectory:
+                        skippedMissingPath++;
+                        if (show != null)
+                        {
+                            showsWithMissingPath.Add(show);
+                        }
+
+                        break;
                     case MediaProcessOutcome.SkippedUnknownLanguage:
                         skippedUnknown++;
                         break;
@@ -468,17 +510,22 @@ public class AutomatedTranslationJob
             }
         }
 
+        // ponytail: self-heal stale entries — resync the whole show against Sonarr
+        // so moved/renamed episode paths are refreshed; episodes removed in Sonarr
+        // are dropped, and a show gone from Sonarr loses its row entirely.
+        await ResyncShowsWithMissingPaths(showsWithMissingPath);
+
         var newIndex = episodeIndex % episodes.Count;
         SetProcessingIndex(ShowProcessingIndexKey, newIndex);
 
         _logger.LogInformation(
             "Episodes pass complete: {New} new translations, {Scanned}/{Total} scanned, {Skipped} skipped " +
-            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}, missing directory: {MissingPath}).",
             translationsInitiated,
             scannedEpisodes,
             episodes.Count,
-            skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent,
-            skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent);
+            skippedNoSubtitles + skippedNoSource + skippedUnknown + skippedUpToDate + skippedTooRecent + skippedMissingPath,
+            skippedNoSubtitles, skippedNoSource, skippedUnknown, skippedUpToDate, skippedTooRecent, skippedMissingPath);
 
         return new AutomationPassStats(
             translationsInitiated,
@@ -489,7 +536,165 @@ public class AutomatedTranslationJob
             skippedUnknown,
             skippedUpToDate,
             skippedTooRecent,
-            excludedCount);
+            excludedCount,
+            skippedMissingPath);
+    }
+
+    /// <summary>
+    /// Self-heals movies whose directory no longer exists: the entry is refreshed
+    /// from Radarr (moved/renamed path) or removed when Radarr no longer has it.
+    /// Capped per run so a whole missing mount does not stampede the Radarr API.
+    /// </summary>
+    private async Task ResyncMoviesWithMissingPaths(List<Movie> movies)
+    {
+        if (movies.Count == 0)
+        {
+            return;
+        }
+
+        var distinct = movies.DistinctBy(movie => movie.Id).ToList();
+        _logger.LogWarning(
+            "{Count} movies have a missing directory; resyncing up to {Cap} of them against Radarr.",
+            distinct.Count, Math.Min(distinct.Count, MaxResyncsPerRun));
+
+        var defaultInclude = await _settingService.GetSetting(SettingKeys.Integration.RadarrDefaultInclude) == "true";
+        var resynced = 0;
+        foreach (var movie in distinct)
+        {
+            if (resynced >= MaxResyncsPerRun)
+            {
+                break;
+            }
+
+            try
+            {
+                resynced++;
+                RadarrMovie? radarrMovie;
+                try
+                {
+                    radarrMovie = await _radarrService.GetMovie(movie.RadarrId);
+                }
+                catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                {
+                    radarrMovie = null;
+                }
+
+                if (radarrMovie == null)
+                {
+                    _logger.LogWarning(
+                        "Movie |Green|{Title}|/Green| no longer exists in Radarr — removing the stale entry.",
+                        movie.Title);
+                    var entity = await _dbContext.Movies
+                        .Include(m => m.Images)
+                        .FirstOrDefaultAsync(m => m.Id == movie.Id);
+                    if (entity != null)
+                    {
+                        _dbContext.Images.RemoveRange(entity.Images);
+                        _dbContext.Movies.Remove(entity);
+                        await _dbContext.SaveChangesAsync();
+                    }
+
+                    continue;
+                }
+
+                await _movieSyncService.SyncMovie(radarrMovie, defaultInclude);
+                _logger.LogInformation(
+                    "Resynced movie |Green|{Title}|/Green| from Radarr after a missing directory.",
+                    movie.Title);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Resync failed for movie |Green|{Title}|/Green| — the stale entry is kept as-is.",
+                    movie.Title);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Self-heals shows that have episodes with a missing directory: the show is
+    /// re-synced from Sonarr (refreshes paths, drops removed episodes) or removed
+    /// entirely when Sonarr no longer has it. Capped per run.
+    /// </summary>
+    private async Task ResyncShowsWithMissingPaths(List<Show> shows)
+    {
+        if (shows.Count == 0)
+        {
+            return;
+        }
+
+        var distinct = shows.DistinctBy(show => show.Id).ToList();
+        _logger.LogWarning(
+            "{Count} shows have episodes with a missing directory; resyncing up to {Cap} of them against Sonarr.",
+            distinct.Count, Math.Min(distinct.Count, MaxResyncsPerRun));
+
+        List<SonarrShow>? sonarrShows;
+        try
+        {
+            sonarrShows = await _sonarrService.GetShows();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Could not reach Sonarr to resync shows with missing directories — stale entries are kept as-is.");
+            return;
+        }
+
+        if (sonarrShows == null)
+        {
+            _logger.LogWarning(
+                "Sonarr is not configured or unreachable — stale show entries are kept as-is. Check the Sonarr integration settings.");
+            return;
+        }
+
+        var defaultInclude = await _settingService.GetSetting(SettingKeys.Integration.SonarrDefaultInclude) == "true";
+        var sonarrShowsById = sonarrShows.ToDictionary(show => show.Id);
+        var resynced = 0;
+        foreach (var show in distinct)
+        {
+            if (resynced >= MaxResyncsPerRun)
+            {
+                break;
+            }
+
+            try
+            {
+                resynced++;
+                if (sonarrShowsById.TryGetValue(show.SonarrId, out var sonarrShow))
+                {
+                    await _showSyncService.SyncShow(sonarrShow, defaultInclude);
+                    _logger.LogInformation(
+                        "Resynced show |Green|{Title}|/Green| from Sonarr after a missing directory.",
+                        show.Title);
+                }
+                else
+                {
+                    _logger.LogWarning(
+                        "Show |Green|{Title}|/Green| no longer exists in Sonarr — removing the stale entry and its episodes.",
+                        show.Title);
+                    var entity = await _dbContext.Shows
+                        .Include(s => s.Images)
+                        .Include(s => s.Seasons)
+                            .ThenInclude(season => season.Episodes)
+                        .FirstOrDefaultAsync(s => s.Id == show.Id);
+                    if (entity != null)
+                    {
+                        var episodes = entity.Seasons.SelectMany(season => season.Episodes).ToList();
+                        _dbContext.Episodes.RemoveRange(episodes);
+                        _dbContext.Seasons.RemoveRange(entity.Seasons);
+                        _dbContext.Images.RemoveRange(entity.Images);
+                        _dbContext.Shows.Remove(entity);
+                        await _dbContext.SaveChangesAsync();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Resync failed for show |Green|{Title}|/Green| — the stale entry is kept as-is.",
+                    show.Title);
+            }
+        }
     }
 
     private int GetProcessingIndex(string key)

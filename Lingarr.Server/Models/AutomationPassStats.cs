@@ -11,6 +11,7 @@ namespace Lingarr.Server.Models;
 /// <param name="Unknown">Files exist but carry no usable language tag.</param>
 /// <param name="UpToDate">Every target already present or requested.</param>
 /// <param name="TooRecent">Skipped by the age threshold.</param>
+/// <param name="MissingPath">Media directory does not exist (stale entry or missing mount).</param>
 /// <param name="Excluded">Library items not evaluated because IncludeInTranslation is off.</param>
 public record AutomationPassStats(
     int New,
@@ -21,7 +22,8 @@ public record AutomationPassStats(
     int Unknown,
     int UpToDate,
     int TooRecent,
-    int Excluded = 0)
+    int Excluded = 0,
+    int MissingPath = 0)
 {
     public static AutomationPassStats operator +(AutomationPassStats left, AutomationPassStats right) =>
         new(
@@ -33,5 +35,6 @@ public record AutomationPassStats(
             left.Unknown + right.Unknown,
             left.UpToDate + right.UpToDate,
             left.TooRecent + right.TooRecent,
-            left.Excluded + right.Excluded);
+            left.Excluded + right.Excluded,
+            left.MissingPath + right.MissingPath);
 }

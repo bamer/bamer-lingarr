@@ -12,6 +12,8 @@ public enum MediaProcessOutcome
     SkippedInvalidMedia,
     /// <summary>No subtitle files matched the media file name.</summary>
     SkippedNoSubtitles,
+    /// <summary>The media directory does not exist (stale entry or missing mount).</summary>
+    SkippedMissingDirectory,
     /// <summary>No subtitle file matches the configured source languages.</summary>
     SkippedNoSourceLanguage,
     /// <summary>Subtitle files exist but carry no usable language tag (AI detection failed).</summary>

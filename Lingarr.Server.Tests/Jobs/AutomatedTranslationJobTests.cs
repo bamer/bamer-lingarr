@@ -9,6 +9,8 @@ using Lingarr.Core.Entities;
 using Lingarr.Core.Enum;
 using Lingarr.Core.Interfaces;
 using Lingarr.Server.Interfaces.Services;
+using Lingarr.Server.Interfaces.Services.Integration;
+using Lingarr.Server.Interfaces.Services.Sync;
 using Lingarr.Server.Jobs;
 using Lingarr.Server.Models;
 using Lingarr.Server.Services;
@@ -98,7 +100,11 @@ public class AutomatedTranslationJobTests
             processor,
             new NoOpScheduleService(),
             new NoOpSettingService(),
-            new MemoryCache(new MemoryCacheOptions()));
+            new MemoryCache(new MemoryCacheOptions()),
+            new Moq.Mock<IRadarrService>().Object,
+            new Moq.Mock<ISonarrService>().Object,
+            new Moq.Mock<IMovieSyncService>().Object,
+            new Moq.Mock<IShowSyncService>().Object);
     }
 
     private static void ConfigureJobForMovies(AutomatedTranslationJob job)

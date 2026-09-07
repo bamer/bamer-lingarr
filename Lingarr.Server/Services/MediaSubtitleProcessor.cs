@@ -23,6 +23,11 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
     private IMedia _media = null!;
     private MediaType _mediaType;
 
+    // ponytail: one warning per missing directory per processor lifetime (one
+    // automation run) — every episode of a renamed/moved show shares the same
+    // dead path and used to repeat the warning dozens of times per pass.
+    private readonly HashSet<string> _missingDirectoriesLogged = new(StringComparer.OrdinalIgnoreCase);
+
     public MediaSubtitleProcessor(
         ITranslationRequestService translationRequestService,
         ILogger<IMediaSubtitleProcessor> logger,
@@ -61,7 +66,25 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
                 mediaType, media.Id);
             return MediaProcessOutcome.SkippedInvalidMedia;
         }
-        
+
+        // ponytail: stale-entry pre-check. A dead path used to fall through to
+        // "no subtitle files matched" with a repeated per-episode warning and
+        // never healed. Now it is a distinct outcome: the automation job
+        // aggregates it, attempts a targeted resync (moved/renamed media gets
+        // its fresh path; media gone from Radarr/Sonarr gets its row removed).
+        if (!Directory.Exists(media.Path))
+        {
+            if (_missingDirectoriesLogged.Add(media.Path))
+            {
+                _logger.LogWarning(
+                    "Directory not found for |Green|{FileName}|/Green| at |Red|{Path}|/Red| — stale entry or missing mount. " +
+                    "A resync will be attempted; if the directory is a volume-mount problem, fix the mount/path mapping (reindexing alone cannot fix a missing mount).",
+                    media.FileName, media.Path);
+            }
+
+            return MediaProcessOutcome.SkippedMissingDirectory;
+        }
+
         var subtitles = await _subtitleService.GetSubtitles(media.Path, media.FileName);
         if (!subtitles.Any())
         {
