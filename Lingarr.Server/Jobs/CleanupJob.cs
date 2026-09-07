@@ -47,23 +47,56 @@ public class CleanupJob
             .Where(pg => pg.CreatedAt < oneWeekAgo && terminalStatuses.Contains(pg.Status))
             .ToListAsync();
 
-        var protectedJobs = await _dbContext.TranslationRequests
-            .Where(pg => pg.CreatedAt < oneWeekAgo && !terminalStatuses.Contains(pg.Status))
-            .CountAsync();
-        if (protectedJobs > 0)
+        // Protect requests whose translated file is broken (0-byte or missing).
+        // The SubtitleRepairJob needs these rows to rebuild the file from DB data.
+        // Once the repair job fixes (or confirms unrepairable) the file, it will
+        // mark the request as Interrupted so cleanup can finally remove it.
+        var protectedJobs = new List<Core.Entities.TranslationRequest>();
+        var jobsToDelete = new List<Core.Entities.TranslationRequest>();
+        foreach (var job in oldJobs)
         {
-            _logger.LogWarning(
-                "{Count} translation requests older than a week are still Pending/InProgress and were kept.",
-                protectedJobs);
+            if (string.IsNullOrEmpty(job.TranslatedSubtitle))
+            {
+                jobsToDelete.Add(job);
+                continue;
+            }
+            try
+            {
+                var info = new FileInfo(job.TranslatedSubtitle);
+                if (!info.Exists || info.Length == 0)
+                {
+                    protectedJobs.Add(job);
+                }
+                else
+                {
+                    jobsToDelete.Add(job);
+                }
+            }
+            catch
+            {
+                jobsToDelete.Add(job);
+            }
         }
 
-        foreach (var job in oldJobs)
+        var pendingProtected = await _dbContext.TranslationRequests
+            .Where(pg => pg.CreatedAt < oneWeekAgo && !terminalStatuses.Contains(pg.Status))
+            .CountAsync();
+        var totalProtected = protectedJobs.Count + pendingProtected;
+        if (totalProtected > 0)
+        {
+            _logger.LogWarning(
+                "{Count} translation requests kept: {BrokenProtected} have broken translated files (repair needed), {PendingProtected} still Pending/InProgress.",
+                totalProtected, protectedJobs.Count, pendingProtected);
+        }
+
+        foreach (var job in jobsToDelete)
         {
             _dbContext.TranslationRequests.Remove(job);
         }
 
         await _dbContext.SaveChangesAsync();
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());
-        _logger.LogInformation($"Removed {oldJobs.Count} translation requests that are older than a week.");
+        _logger.LogInformation("Removed {Count} old translation requests, kept {Protected} with broken files.",
+            jobsToDelete.Count, protectedJobs.Count);
     }
 }
