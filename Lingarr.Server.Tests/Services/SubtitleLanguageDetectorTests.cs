@@ -40,7 +40,8 @@ public class SubtitleLanguageDetectorTests
 
     private static SubtitleLanguageDetector CreateDetector(
         ITranslationService translationService,
-        ISubtitleService? subtitleService = null)
+        ISubtitleService? subtitleService = null,
+        string? sourceLanguageCode = null)
     {
         var factoryMock = new Mock<ITranslationServiceFactory>();
         factoryMock
@@ -51,6 +52,11 @@ public class SubtitleLanguageDetectorTests
         settingsMock
             .Setup(s => s.GetSetting(SettingKeys.Translation.ServiceType))
             .ReturnsAsync("localai");
+        settingsMock
+            .Setup(s => s.GetSettingAsJson<Lingarr.Contracts.Models.SourceLanguage>(SettingKeys.Translation.SourceLanguages))
+            .ReturnsAsync(sourceLanguageCode == null
+                ? new List<Lingarr.Contracts.Models.SourceLanguage>()
+                : new List<Lingarr.Contracts.Models.SourceLanguage> { new() { Code = sourceLanguageCode, Name = sourceLanguageCode } });
 
         return new SubtitleLanguageDetector(
             factoryMock.Object,
@@ -123,6 +129,113 @@ public class SubtitleLanguageDetectorTests
         var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
 
         Assert.False(renamed);
+    }
+
+    [Fact]
+    public async Task DetectAndRename_UntaggedDuplicateOfTaggedFile_RemovesWithoutAiRequest()
+    {
+        using var tempDirectory = new TempDirectory();
+        var untaggedPath = WriteUntaggedSrt(tempDirectory.Path);
+        var taggedPath = Path.Combine(tempDirectory.Path, "Some.Movie.2023.en.srt");
+        File.Copy(untaggedPath, taggedPath);
+
+        var translationMock = new Mock<ITranslationService>(MockBehavior.Strict);
+
+        var detector = CreateDetector(translationMock.Object);
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = untaggedPath, FileName = "Some.Movie.2023", Language = "", Caption = "", Format = ".srt" },
+            new() { Path = taggedPath, FileName = "Some.Movie.2023.en", Language = "en", Caption = "", Format = ".srt" }
+        };
+
+        var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+
+        // A file was removed → true (the caller re-lists the directory).
+        Assert.True(renamed);
+        Assert.False(File.Exists(untaggedPath), "untagged duplicate should be removed");
+        Assert.True(File.Exists(taggedPath), "tagged original must be kept");
+    }
+
+    [Fact]
+    public async Task DetectAndRename_WhenTaggedSourceExists_SkipsAiDetection()
+    {
+        using var tempDirectory = new TempDirectory();
+        var untaggedPath = WriteUntaggedSrt(tempDirectory.Path);
+        var taggedPath = Path.Combine(tempDirectory.Path, "Some.Movie.2023.en.srt");
+        // Different content: the untagged file is NOT a byte-identical duplicate,
+        // so the only thing that avoids the AI is the tagged source language.
+        File.WriteAllText(taggedPath, File.ReadAllText(untaggedPath).Replace("1", "99"));
+
+        var translationMock = new Mock<ITranslationService>(MockBehavior.Strict);
+        var detector = CreateDetector(translationMock.Object, sourceLanguageCode: "en");
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = untaggedPath, FileName = "Some.Movie.2023", Language = "", Caption = "", Format = ".srt" },
+            new() { Path = taggedPath, FileName = "Some.Movie.2023.en", Language = "en", Caption = "", Format = ".srt" }
+        };
+
+        var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+
+        Assert.False(renamed);
+        Assert.True(File.Exists(untaggedPath), "untagged file left untouched by design");
+        // No AI request was made.
+    }
+
+    [Fact]
+    public async Task DetectAndRename_CollisionSameLanguageDifferentContent_renamesWithCounterSuffix()
+    {
+        using var tempDirectory = new TempDirectory();
+        var untaggedPath = WriteUntaggedSrt(tempDirectory.Path);
+        var taggedPath = Path.Combine(tempDirectory.Path, "Some.Movie.2023.en.srt");
+        File.WriteAllText(taggedPath, File.ReadAllText(untaggedPath).Replace("1", "99"));
+
+        var translationMock = new Mock<ITranslationService>();
+        translationMock
+            .Setup(s => s.DetectLanguageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("en");
+
+        var detector = CreateDetector(translationMock.Object);
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = untaggedPath, FileName = "Some.Movie.2023", Language = "", Caption = "", Format = ".srt" },
+            new() { Path = taggedPath, FileName = "Some.Movie.2023.en", Language = "en", Caption = "", Format = ".srt" }
+        };
+
+        var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+
+        Assert.True(renamed);
+        Assert.False(File.Exists(untaggedPath), "untagged file should have been renamed");
+        Assert.True(File.Exists(Path.Combine(tempDirectory.Path, "Some.Movie.2023.2.en.srt")),
+            "different-content collision should produce a counter-suffixed tagged file");
+    }
+
+    [Fact]
+    public async Task DetectAndRename_FailedDetectionOnce_DoesNotCallAiForSameVersionAgain()
+    {
+        using var tempDirectory = new TempDirectory();
+        var path = WriteUntaggedSrt(tempDirectory.Path);
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = path, FileName = "Some.Movie.2023", Language = "", Caption = "", Format = ".srt" }
+        };
+
+        var translationMock = new Mock<ITranslationService>();
+        translationMock
+            .Setup(s => s.DetectLanguageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        // First call: detection fails and the version is memoized.
+        var detector = CreateDetector(translationMock.Object);
+        var first = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+        Assert.False(first);
+
+        // Second call on the same file: the AI must not be contacted again.
+        var second = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+        Assert.False(second);
+
+        translationMock.Verify(
+            s => s.DetectLanguageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

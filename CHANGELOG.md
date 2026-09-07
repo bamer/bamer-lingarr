@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.24.2] - 2026-09-07
+
+### Fixed
+- **Language detection no longer wastes AI requests** — Three changes to `SubtitleLanguageDetector`:
+  - **Tagged source present → no AI call.** When a subtitle already matches a configured source language (e.g. `...en.srt`), untagged siblings are redundant: the automation can produce every missing target from the tagged source. Detection is skipped (logged), instead of paying one AI request per media per pass for files that may never be renamed.
+  - **Byte-identical duplicates are removed, not queried.** An untagged file that is an exact copy of a tagged sibling (same release imported twice) is deleted immediately — zero AI cost, and it stops re-appearing in every pass.
+  - **Failed detection is memoized per file version** (path + size + mtime). A file the AI could not identify is not re-sent to the AI on subsequent passes; editing the file resets the memo and it is retried.
+- **"…already exists — leaving the file untouched" no longer loops forever** — When detection returns a language whose tagged target already exists, the file used to stay untagged and was re-queried every pass. Now: identical content → the untagged duplicate is removed; different content → the file is renamed with a counter suffix *before* the language (`basename.2.en.srt`), which keeps it parseable and tagged for good.
+
 ## [2.24.1] - 2026-09-07
 
 ### Fixed
