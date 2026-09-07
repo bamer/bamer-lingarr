@@ -60,6 +60,10 @@ public class SubtitleRepairJob
             .Distinct()
             .ToList();
 
+        _logger.LogWarning(
+            "Subtitle repair: {RequestCount} requests loaded, {DirCount} directories to scan: [{Dirs}].",
+            allPaths.Count, directories.Count, string.Join(", ", directories));
+
         // Pre-load all translation request paths for fast in-memory lookup.
         var knownPaths = await _dbContext.TranslationRequests
             .Where(r => r.SubtitleToTranslate != null || r.TranslatedSubtitle != null)
