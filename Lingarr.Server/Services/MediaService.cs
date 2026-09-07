@@ -405,7 +405,7 @@ public class MediaService : IMediaService
                             Included = g.Count(m => m.IncludeInTranslation),
                             Total = g.Count()
                         })
-                        .FirstOrDefaultAsync();
+                        .SingleOrDefaultAsync();
 
                     return new IncludeSummary
                     {
@@ -423,7 +423,7 @@ public class MediaService : IMediaService
                             Included = g.Count(s => s.IncludeInTranslation),
                             Total = g.Count()
                         })
-                        .FirstOrDefaultAsync();
+                        .SingleOrDefaultAsync();
 
                     return new IncludeSummary
                     {

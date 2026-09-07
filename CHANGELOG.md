@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.23.2] - 2026-09-06
+
+### Fixed
+- **EF `FirstWithoutOrderByAndFilter` crash in `GetIncludeSummary`** — The `GroupBy(x => 1)…FirstOrDefaultAsync()` aggregate (movies + shows) has neither filter nor ordering, which EF Core refuses to translate (MySQL/prod only — InMemory tests never see it). Switched to `SingleOrDefaultAsync`: the constant key yields at most one group, so no ordering is needed.
+
 ## [2.23.1] - 2026-09-06
 
 ### Fixed
