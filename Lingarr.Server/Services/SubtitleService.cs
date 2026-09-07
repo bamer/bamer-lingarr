@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using Lingarr.Contracts.Exceptions;
 using Lingarr.Contracts.Translation;
 using Lingarr.Server.Interfaces.Services;
 using Lingarr.Server.Interfaces.Services.Subtitle;
@@ -111,6 +112,16 @@ public class SubtitleService : ISubtitleService
     /// <inheritdoc />
     public async Task WriteSubtitles(string filePath, List<SubtitleItem> subtitles, bool stripSubtitleFormatting)
     {
+        // ponytail: never persist an empty subtitle file — a 0-byte .srt marked
+        // Completed poisons downstream runs (the parser drops textless cues, so the
+        // next pass reads zero items and "succeeds" again). Fail loudly instead.
+        if (subtitles.Count == 0
+            || subtitles.All(subtitle => subtitle.TranslatedLines.All(string.IsNullOrWhiteSpace)))
+        {
+            _logger.LogError("Refusing to write empty subtitle file: {FilePath}", filePath);
+            throw new TranslationException($"Refusing to write empty subtitle file: {filePath}");
+        }
+
         var extension = Path.GetExtension(filePath).ToLower();
         ISubtitleWriter writer = extension switch
         {

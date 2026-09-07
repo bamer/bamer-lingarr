@@ -497,11 +497,14 @@ public class SubtitleTranslationService
         foreach (var subtitle in toTranslate)
         {
             var contentLines = stripSubtitleFormatting ? subtitle.PlaintextLines : subtitle.Lines;
-            if (!batchResults.TryGetValue(subtitle.Position, out var translated))
+            if (!batchResults.TryGetValue(subtitle.Position, out var translated)
+                || string.IsNullOrWhiteSpace(translated))
             {
                 failedPositions.Add(subtitle.Position);
                 // Fallback to original lines so the subtitle file remains valid; the position
                 // is still tracked as failed for Partial status and retry handling.
+                // (Empty model output counts as failed — a blank cue would poison
+                // downstream runs, as the parser silently drops textless cues.)
                 subtitle.TranslatedLines = contentLines;
                 continue;
             }

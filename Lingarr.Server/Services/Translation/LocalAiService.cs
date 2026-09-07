@@ -950,7 +950,8 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
         var pattern = @"\{""position"":\s*(\d+)?\s*,\s*""line""\s*:\s*""((?:[^""\\]|\\.)*)""\s*\}";
         var matches = Regex.Matches(json, pattern);
 
-        // If we got matches with position numbers, use them
+        // If we got matches with position numbers, use them (skip empties — a blank
+        // line is not a translation, and downstream treats a present key as success).
         foreach (Match match in matches)
         {
             if (match.Groups[1].Success && int.TryParse(match.Groups[1].Value, out var position))
@@ -958,6 +959,10 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
                 var line = match.Groups[2].Value
                     .Replace("\\\"", "\"")
                     .Replace("\\n", "\n");
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
                 results.Add(new StructuredBatchResponse { Position = position, Line = line });
             }
         }
@@ -976,7 +981,11 @@ public class LocalAiService : BaseLanguageService, ITranslationService, IBatchTr
             var line = match.Groups[1].Value
                 .Replace("\\\"", "\"")
                 .Replace("\\n", "\n");
-            results.Add(new StructuredBatchResponse { Position = assumedPosition++, Line = line });
+            if (!string.IsNullOrWhiteSpace(line))
+            {
+                results.Add(new StructuredBatchResponse { Position = assumedPosition, Line = line });
+            }
+            assumedPosition++;
         }
 
         return results;

@@ -512,6 +512,26 @@ public class SubtitleTranslationServiceTests
         Assert.Equal(["hello", "world"], subtitles[0].TranslatedLines);
     }
 
+    [Fact]
+    public async Task ProcessSubtitleBatch_EmptyTranslation_CountsAsFailedWithOriginalFallback()
+    {
+        // Arrange - the model returned an empty string: must not become a blank cue
+        var harness = CreateBatchHarness(_ => new Dictionary<int, string> { [1] = "", [2] = "hola" });
+        var subtitles = new List<SubtitleItem> { Subtitle(1, "hello"), Subtitle(2, "world") };
+
+        // Act
+        var (_, failedPositions) = await harness.Service.ProcessSubtitleBatch(subtitles,
+            "en", "es",
+            stripSubtitleFormatting: false,
+            preserveLineBreaks: false,
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal([1], failedPositions);
+        Assert.Equal(["hello"], subtitles[0].TranslatedLines);
+        Assert.Equal(["hola"], subtitles[1].TranslatedLines);
+    }
+
     #endregion
 
     #region Chain-wide best-match resolution

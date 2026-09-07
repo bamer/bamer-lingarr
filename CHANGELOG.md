@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.24.4] - 2026-09-07
+
+### Fixed
+- **Empty model output no longer produces blank/0-byte subtitles** — A missing *or whitespace-only* translation now counts as a failed position (retry + original-text fallback + `Partial` status) instead of a blank cue marked as success. The regex JSON fallback also skips empty captures instead of fabricating them.
+- **0-byte files are refused loudly** — `WriteSubtitles` throws instead of persisting an empty subtitle list (or all-blank lines), so a starved run ends `Failed` with a clear error instead of a `Completed` 0-byte file. This also breaks the cascade where blank cues were silently dropped by the parser on the next pass, shrinking every downstream file to zero.
+
+### Added
+- **Subtitle repair job (manual, Schedule page)** — New `SubtitleRepairJob`, launched on demand via Start: scans every `.srt` under known media directories, rebuilds files that parse to zero cues from the translation lines in the database (timings taken from the source file, source-text fallback for missing positions), and deletes the corpse when nothing usable exists in the database. Files written minutes ago are skipped (never touch an in-flight translation); ends with a repaired/deleted/skipped summary.
+
 ## [2.24.3] - 2026-09-07
 
 ### Fixed
