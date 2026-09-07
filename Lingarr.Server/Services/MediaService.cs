@@ -2,6 +2,7 @@
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
 using Lingarr.Core.Enum;
+using Lingarr.Core.Exceptions;
 using Lingarr.Server.Models;
 using Microsoft.EntityFrameworkCore;
 using Lingarr.Server.Models.Api;
@@ -137,7 +138,7 @@ public class MediaService : IMediaService
             
             return movieEntity.Id;
         }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        catch (IntegrationException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // Movie doesn't exist in Radarr
             _logger.LogWarning("Movie with Radarr ID {MovieId} not found in Radarr (404)", movieId);
@@ -183,7 +184,7 @@ public class MediaService : IMediaService
                 .SelectMany(s => s.Episodes)
                 .FirstOrDefault(e => e.SonarrId == episodeNumber)?.Id ?? 0;
         }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        catch (IntegrationException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // Episode doesn't exist in Sonarr
             _logger.LogWarning("Episode with Sonarr ID {EpisodeId} not found in Sonarr (404)", episodeNumber);

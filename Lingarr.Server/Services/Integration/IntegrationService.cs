@@ -1,4 +1,5 @@
-﻿using Lingarr.Server.Interfaces.Providers;
+﻿using Lingarr.Core.Exceptions;
+using Lingarr.Server.Interfaces.Providers;
 using Lingarr.Server.Models;
 using Lingarr.Server.Interfaces.Services;
 using System.Text.Json;
@@ -29,7 +30,10 @@ public class IntegrationService : IIntegrationService
         if (!response.IsSuccessStatusCode)
         {
             var errorContent = await response.Content.ReadAsStringAsync();
-            throw new HttpRequestException($"Integration request failed: {response.StatusCode}: {errorContent}");
+            throw new IntegrationException(
+                $"Integration request failed: {response.StatusCode}: {errorContent}",
+                response.StatusCode,
+                errorContent);
         }
 
         await using var responseStream = await response.Content.ReadAsStreamAsync();

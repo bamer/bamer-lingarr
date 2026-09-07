@@ -3,6 +3,7 @@ using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Core.Entities;
 using Lingarr.Core.Enum;
+using Lingarr.Core.Exceptions;
 using Lingarr.Core.Interfaces;
 using Lingarr.Server.Filters;
 using Lingarr.Server.Interfaces.Services;
@@ -587,7 +588,7 @@ public class AutomatedTranslationJob
                 {
                     radarrMovie = await _radarrService.GetMovie(movie.RadarrId);
                 }
-                catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+                catch (IntegrationException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
                 {
                     radarrMovie = null;
                 }

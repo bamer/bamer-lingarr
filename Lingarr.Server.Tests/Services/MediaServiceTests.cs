@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
+using Lingarr.Core.Exceptions;
 using System.Net.Http;
 using Lingarr.Server.Interfaces.Services.Integration;
 using Lingarr.Server.Interfaces.Services;
@@ -38,10 +39,10 @@ public class MediaServiceTests
         var subtitleMock = new Mock<ISubtitleService>();
         var logger = NullLogger<MediaService>.Instance;
 
-        // Configure Sonarr to throw HttpRequestException with 404 status
+        // Configure Sonarr to throw IntegrationException with 404 status
         sonarrMock
             .Setup(s => s.GetEpisode(It.IsAny<int>()))
-            .ThrowsAsync(new HttpRequestException("Not found", null, HttpStatusCode.NotFound));
+            .ThrowsAsync(new IntegrationException("Not found", HttpStatusCode.NotFound));
 
         // Configure GetShows to return a sample list when called
         sonarrMock
