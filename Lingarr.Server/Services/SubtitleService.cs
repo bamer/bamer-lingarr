@@ -32,7 +32,7 @@ public class SubtitleService : ISubtitleService
         if (!Directory.Exists(path))
         {
             _logger.LogInformation(
-                "Failed to collect subtitles in path |Red|{Path}|/Red|. Try reindexing or verify that the media is correctly set up in the source system.",
+                "Failed to collect subtitles in path |Red|{Path}|/Red|. The directory is not visible inside the container — check volume mounts and path mappings (reindexing alone cannot fix a missing mount).",
                 path);
             return Task.FromResult(new List<Subtitles>());
         }

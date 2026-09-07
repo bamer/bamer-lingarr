@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.23.1] - 2026-09-06
+
+### Fixed
+- **Misleading "Try reindexing" message** — An invisible directory is a container mount / path-mapping problem; reindexing re-syncs the same unreachable path. The log now says so.
+- **Excluded-item counters** — Each pass logs how many movies/shows/seasons/episodes are skipped by the `IncludeInTranslation` flag, so `scanned < library size` gaps are explainable.
+
 ## [2.23.0] - 2026-09-06
 
 ### Fixed

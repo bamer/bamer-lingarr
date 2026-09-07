@@ -190,6 +190,15 @@ public class AutomatedTranslationJob
             _logger.LogInformation("No translatable movies found.");
             return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
         }
+
+        // ponytail: flag-off rows explain "missing" items (scanned < library size).
+        var excludedMovies = await _dbContext.Movies.CountAsync(movie => !movie.IncludeInTranslation);
+        if (excludedMovies > 0)
+        {
+            _logger.LogInformation(
+                "{Count} movies excluded by the IncludeInTranslation flag.",
+                excludedMovies);
+        }
         
         // Instead of a random selection based on updatedAt, we will use a cycle so that all shows are processed.
         // Hopefully, this will prevent some shows from not being processed at all.
@@ -315,6 +324,17 @@ public class AutomatedTranslationJob
         {
             _logger.LogInformation("No translatable shows found.");
             return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
+        }
+
+        // ponytail: flag-off rows explain "missing" items (scanned < library size).
+        var excludedShows = await _dbContext.Shows.CountAsync(show => !show.IncludeInTranslation);
+        var excludedSeasons = await _dbContext.Seasons.CountAsync(season => !season.IncludeInTranslation);
+        var excludedEpisodes = await _dbContext.Episodes.CountAsync(episode => !episode.IncludeInTranslation);
+        if (excludedShows + excludedSeasons + excludedEpisodes > 0)
+        {
+            _logger.LogInformation(
+                "Excluded by the IncludeInTranslation flag: {Shows} shows, {Seasons} seasons, {Episodes} episodes.",
+                excludedShows, excludedSeasons, excludedEpisodes);
         }
 
         // Instead of a random selection based on updatedAt, we will use a cycle so that all shows are processed.
