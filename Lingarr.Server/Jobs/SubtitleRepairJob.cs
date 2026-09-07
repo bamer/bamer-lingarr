@@ -47,16 +47,18 @@ public class SubtitleRepairJob
         // Derive scan directories from the translation requests themselves:
         // every SubtitleToTranslate/TranslatedSubtitle path tells us where the
         // media folder is.  This avoids depending on Movies/Episodes tables.
-        var directories = await _dbContext.TranslationRequests
-            .Where(r => r.SubtitleToTranslate != null)
-            .Select(r => r.SubtitleToTranslate!)
-            .Concat(_dbContext.TranslationRequests
-                .Where(r => r.TranslatedSubtitle != null)
-                .Select(r => r.TranslatedSubtitle!))
-            .Select(path => Path.GetDirectoryName(path)!)
-            .Where(dir => dir != null)
-            .Distinct()
+        var allPaths = await _dbContext.TranslationRequests
+            .Where(r => r.SubtitleToTranslate != null || r.TranslatedSubtitle != null)
+            .Select(r => new { r.SubtitleToTranslate, r.TranslatedSubtitle })
             .ToListAsync();
+
+        var directories = allPaths
+            .SelectMany(r => new[] { r.SubtitleToTranslate, r.TranslatedSubtitle })
+            .Where(p => !string.IsNullOrEmpty(p))
+            .Select(p => Path.GetDirectoryName(p)!)
+            .Where(d => !string.IsNullOrEmpty(d))
+            .Distinct()
+            .ToList();
 
         // Pre-load all translation request paths for fast in-memory lookup.
         var knownPaths = await _dbContext.TranslationRequests
