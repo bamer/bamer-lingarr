@@ -32,9 +32,30 @@ public class CleanupJob
         await _scheduleService.UpdateJobState(jobName, JobStatus.Processing.GetDisplayName());
 
         var oneWeekAgo = DateTime.UtcNow.AddDays(-7);
+        // ponytail: only terminal requests are history. Deleting Pending/InProgress
+        // rows silently dropped queued work every week (translations vanished
+        // "without reason" when the backlog was slower than the cleanup cycle).
+        var terminalStatuses = new[]
+        {
+            TranslationStatus.Completed,
+            TranslationStatus.Failed,
+            TranslationStatus.Cancelled,
+            TranslationStatus.Interrupted,
+            TranslationStatus.Partial
+        };
         var oldJobs = await _dbContext.TranslationRequests
-            .Where(pg => pg.CreatedAt < oneWeekAgo)
+            .Where(pg => pg.CreatedAt < oneWeekAgo && terminalStatuses.Contains(pg.Status))
             .ToListAsync();
+
+        var protectedJobs = await _dbContext.TranslationRequests
+            .Where(pg => pg.CreatedAt < oneWeekAgo && !terminalStatuses.Contains(pg.Status))
+            .CountAsync();
+        if (protectedJobs > 0)
+        {
+            _logger.LogWarning(
+                "{Count} translation requests older than a week are still Pending/InProgress and were kept.",
+                protectedJobs);
+        }
 
         foreach (var job in oldJobs)
         {

@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.24.0] - 2026-09-07
+
+### Fixed
+- **Automation stuck on `Completed` requests with a missing output file** — A target language with a `Completed` request was blocked forever even when the translated file was gone (deleted, never written, video replaced). Example: *Albator* had `en`/`fr` files but Thai was never re-queued because an old `th` request was `Completed`. A `Completed` request now blocks only while its output file (`TranslatedSubtitle`) still exists on disk; otherwise the target is re-queued. Blocked targets are also logged at INFO with their request status (`ro: Completed`), so "why isn't X queued?" is visible in the logs.
+- **`CleanupJob` silently deleted queued work** — It removed *all* translation requests older than 7 days, including `Pending`/`InProgress` ones, so a backlog slower than a week lost translations "without reason". Only terminal statuses (`Completed`, `Failed`, `Cancelled`, `Interrupted`, `Partial`) are purged now; still-active old requests are counted and logged as kept.
+- **Automation crashes left the job state on "Processing" forever** — `RunAutomation` had no global try/catch, so an exception outside the per-item handlers killed the run without a summary and without flipping the job state to `Failed`. The state is now set to `Failed` and the error logged before rethrowing.
+- **Gate-skipped triggers were invisible** — When an automation run is already in progress, new triggers were skipped with an INFO log. This is now a WARNING including how long the current run has been going, to surface a stuck run (e.g. a blocked network share) that silently eats every trigger.
+
+### Changed
+- **Grand-total summary now reports excluded items** — `Automation run complete` includes an `excluded by the IncludeInTranslation flag` figure, so `scanned/total` (which only counts included media) can be reconciled with the real library size.
+- **Summary breaks the total down per media type** — `Automation run complete` now shows `{Scanned}/{Total} scanned ({Movies} movies + {Episodes} episodes)`. Lingarr counts media items (1 movie = 1 item, 1 episode file = 1 item), so a total that matches the Radarr movie count exactly means the episodes contributed nothing — visible at a glance now.
+
 ## [2.23.2] - 2026-09-06
 
 ### Fixed

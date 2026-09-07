@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
 using Lingarr.Contracts.Models;
 using Lingarr.Core.Configuration;
@@ -13,8 +14,9 @@ namespace Lingarr.Server.Tests.Services.MediaSubtitleProcessor;
 
 /// <summary>
 /// Tests for duplicate translation prevention (issue #312).
-/// Ensures that languages with existing pending, in-progress, or completed
-/// translation requests are not re-queued.
+/// Ensures that languages with pending or in-progress translation requests are
+/// not re-queued, and that a completed request blocks only while its output
+/// file still exists (a deleted output must be re-queued).
 /// </summary>
 public class DuplicateTranslationTests : MediaSubtitleProcessorTestBase
 {
@@ -111,7 +113,7 @@ public class DuplicateTranslationTests : MediaSubtitleProcessorTestBase
     }
 
     [Fact]
-    public async Task ProcessMedia_WithCompletedRequest_ShouldNotCreateDuplicate()
+    public async Task ProcessMedia_WithCompletedRequestAndMissingOutputFile_ShouldCreateNewRequest()
     {
         // Arrange
         var movie = await CreateTestMovie();
@@ -133,7 +135,9 @@ public class DuplicateTranslationTests : MediaSubtitleProcessorTestBase
 
         SetupStandardSettings();
 
-        // Simulate a completed translation request (e.g., file written with removeLanguageTag)
+        // Simulate a completed translation request whose output file no longer
+        // exists (deleted, never written, or the video was replaced). The target
+        // must be re-queued instead of being stuck forever.
         DbContext.TranslationRequests.Add(new TranslationRequest
         {
             MediaId = movie.Id,
@@ -141,6 +145,7 @@ public class DuplicateTranslationTests : MediaSubtitleProcessorTestBase
             SourceLanguage = "en",
             TargetLanguage = "ro",
             SubtitleToTranslate = "/movies/test/test.movie.en.srt",
+            TranslatedSubtitle = "/movies/test/test.movie.ro.srt",
             MediaType = MediaType.Movie,
             Status = TranslationStatus.Completed
         });
@@ -149,11 +154,67 @@ public class DuplicateTranslationTests : MediaSubtitleProcessorTestBase
         // Act
         var result = await Processor.ProcessMedia(movie, MediaType.Movie);
 
-        // Assert - Should not re-queue a completed translation
-        Assert.False(result);
+        // Assert - missing output file means the translation must be redone
+        Assert.True(result);
         TranslationRequestServiceMock.Verify(
-            s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()),
-            Times.Never);
+            s => s.CreateRequest(It.Is<TranslateAbleSubtitle>(t =>
+                t.TargetLanguage == "ro")),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessMedia_WithCompletedRequestAndExistingOutputFile_ShouldNotCreateDuplicate()
+    {
+        // Arrange - the completed request's output file still exists on disk
+        var outputFile = Path.Combine(Path.GetTempPath(), $"lingarr-test-{System.Guid.NewGuid():N}.srt");
+        await File.WriteAllTextAsync(outputFile, "stub");
+        try
+        {
+            var movie = await CreateTestMovie();
+            var subtitles = new List<Subtitles>
+            {
+                new()
+                {
+                    Path = "/movies/test/test.movie.en.srt",
+                    FileName = "test.movie.en",
+                    Language = "en",
+                    Caption = "",
+                    Format = ".srt"
+                }
+            };
+
+            SubtitleServiceMock
+                .Setup(s => s.GetSubtitles(It.IsAny<string>(), It.IsAny<string>()))
+                .ReturnsAsync(subtitles);
+
+            SetupStandardSettings();
+
+            DbContext.TranslationRequests.Add(new TranslationRequest
+            {
+                MediaId = movie.Id,
+                Title = "Test Movie",
+                SourceLanguage = "en",
+                TargetLanguage = "ro",
+                SubtitleToTranslate = "/movies/test/test.movie.en.srt",
+                TranslatedSubtitle = outputFile,
+                MediaType = MediaType.Movie,
+                Status = TranslationStatus.Completed
+            });
+            await DbContext.SaveChangesAsync();
+
+            // Act
+            var result = await Processor.ProcessMedia(movie, MediaType.Movie);
+
+            // Assert - completed translation with its file present is not re-queued
+            Assert.False(result);
+            TranslationRequestServiceMock.Verify(
+                s => s.CreateRequest(It.IsAny<TranslateAbleSubtitle>()),
+                Times.Never);
+        }
+        finally
+        {
+            File.Delete(outputFile);
+        }
     }
 
     [Fact]

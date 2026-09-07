@@ -160,22 +160,69 @@ public class MediaSubtitleProcessor : IMediaSubtitleProcessor
             .Where(targetLanguage =>
                 _languageCodeService.GetBestMatch(targetLanguage, presentLanguages) is null)
             .ToList();
-        
+
+        // ponytail: presence is verified against actual files above, so only work
+        // that is still queued or running blocks a target. A Completed request
+        // blocks only while its output file still exists — if the file was
+        // deleted (or never written), the target must be re-queued (2548+ medias
+        // were stuck this way; e.g. a completed Thai request with no .th file).
+        var existingRequests = await _dbContext.TranslationRequests
+            .Where(translationRequest => translationRequest.MediaId == _media.Id
+                                         && translationRequest.MediaType == _mediaType
+                                         && new[]
+                                             {
+                                                 TranslationStatus.Pending,
+                                                 TranslationStatus.InProgress,
+                                                 TranslationStatus.Completed
+                                             }.Contains(translationRequest.Status))
+            .Select(translationRequest => new
+            {
+                translationRequest.TargetLanguage,
+                translationRequest.Status,
+                translationRequest.TranslatedSubtitle
+            })
+            .ToListAsync();
+
+        // Queued or running work always blocks its target language.
         var activeStatuses = new[]
         {
             TranslationStatus.Pending,
-            TranslationStatus.InProgress,
-            TranslationStatus.Completed
+            TranslationStatus.InProgress
         };
-        var existingTranslationRequests = await _dbContext.TranslationRequests
-            .Where(translationRequest => translationRequest.MediaId == _media.Id
-                                         && translationRequest.MediaType == _mediaType
-                                         && activeStatuses.Contains(translationRequest.Status))
-            .Select(translationRequest => translationRequest.TargetLanguage)
-            .Distinct()
-            .ToListAsync();
+        var activeTargets = existingRequests
+            .Where(request => activeStatuses.Contains(request.Status))
+            .Select(request => request.TargetLanguage)
+            .ToHashSet();
 
-        languagesToTranslate = languagesToTranslate.Except(existingTranslationRequests).ToList();
+        // A Completed request only satisfies its target when its output file is
+        // still on disk; otherwise the translation must be redone.
+        var completedTargets = existingRequests
+            .Where(request => request.Status == TranslationStatus.Completed
+                              && !string.IsNullOrEmpty(request.TranslatedSubtitle)
+                              && File.Exists(request.TranslatedSubtitle))
+            .Select(request => request.TargetLanguage)
+            .ToHashSet();
+
+        var blockedByRequests = languagesToTranslate
+            .Where(targetLanguage => activeTargets.Contains(targetLanguage)
+                                     || completedTargets.Contains(targetLanguage))
+            .ToList();
+        languagesToTranslate = languagesToTranslate
+            .Except(activeTargets)
+            .Except(completedTargets)
+            .ToList();
+
+        if (blockedByRequests.Any())
+        {
+            _logger.LogInformation(
+                "Media |Green|{FileName}|/Green|: target(s) |Orange|{Languages}|/Orange| skipped — translation request(s) already exist ({Details}).",
+                _media?.FileName,
+                string.Join(", ", blockedByRequests),
+                string.Join("; ", existingRequests
+                    .Where(request => blockedByRequests.Contains(request.TargetLanguage))
+                    .Select(request => $"{request.TargetLanguage}: {request.Status}")));
+        }
+
         if (!languagesToTranslate.Any())
         {
             _logger.LogDebug(

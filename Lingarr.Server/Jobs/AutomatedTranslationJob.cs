@@ -48,23 +48,56 @@ public class AutomatedTranslationJob
     // and blocked new runs for the full 10-min timeout ("Slow log ... OnPerforming")
     private static readonly SemaphoreSlim AutomationGate = new(1, 1);
 
+    private const string AutomationRunStartedKey = "Automation:RunStartedAt";
+
     [AutomaticRetry(Attempts = 0)]
     [Queue("translation")]
     public async Task Execute()
     {
         if (!await AutomationGate.WaitAsync(TimeSpan.Zero))
         {
-            _logger.LogInformation("Automation already running, skipping this trigger.");
+            // ponytail: warn (not info) — a gate held for hours means a previous
+            // run is stuck (e.g. a blocked network share) and silently ate every
+            // trigger since.
+            var startedAt = _memoryCache.TryGetValue<DateTimeOffset>(AutomationRunStartedKey, out var since)
+                ? since
+                : DateTimeOffset.UtcNow;
+            _logger.LogWarning(
+                "Automation already running for {RunningFor}, skipping this trigger.",
+                DateTimeOffset.UtcNow - startedAt);
             return;
         }
 
+        _memoryCache.Set(
+            AutomationRunStartedKey,
+            DateTimeOffset.UtcNow,
+            new MemoryCacheEntryOptions { Priority = CacheItemPriority.NeverRemove });
         try
         {
             await RunAutomation();
         }
+        catch (Exception ex)
+        {
+            // ponytail: without this, a crash mid-pass leaves the job state stuck
+            // on "Processing" forever and no summary is logged — the run just
+            // "stops without reason".
+            _logger.LogError(ex, "Automation run failed: {Message}", ex.Message);
+            try
+            {
+                var failedJobName = JobContextFilter.GetCurrentJobTypeName();
+                await _scheduleService.UpdateJobState(failedJobName, JobStatus.Failed.GetDisplayName());
+            }
+            catch (Exception stateEx)
+            {
+                _logger.LogError(stateEx, "Failed to update job state after automation error.");
+            }
+
+            throw;
+        }
         finally
         {
             AutomationGate.Release();
+            _memoryCache.Remove(AutomationRunStartedKey);
         }
     }
 
@@ -99,38 +132,51 @@ public class AutomatedTranslationJob
         _logger.LogInformation($"Starting translation cycle for |Green|{translationCycle}|/Green|");
 
         // ponytail: one grand-total summary at the end of the task — per-pass lines
-        // get buried mid-logs on big libraries.
+        // get buried mid-logs on big libraries. Movies and episodes are tracked
+        // separately so the summary shows what each side of the library
+        // contributed (a 1622 total that is only movies is instantly visible).
         var total = new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
+        var movieStats = new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
+        var showStats = new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
         switch (translationCycle)
         {
             case "movies":
                 await _settingService.SetSetting(SettingKeys.Automation.TranslationCycle, "false");
-                total += await ProcessMovies(_maxTranslationsPerRun);
+                movieStats = await ProcessMovies(_maxTranslationsPerRun);
+                total += movieStats;
                 if (total.New < _maxTranslationsPerRun)
                 {
-                    total += await ProcessShows(_maxTranslationsPerRun - total.New);
+                    showStats = await ProcessShows(_maxTranslationsPerRun - total.New);
+                    total += showStats;
                 }
 
                 break;
             case "shows":
                 await _settingService.SetSetting(SettingKeys.Automation.TranslationCycle, "true");
-                total += await ProcessShows(_maxTranslationsPerRun);
+                showStats = await ProcessShows(_maxTranslationsPerRun);
+                total += showStats;
                 if (total.New < _maxTranslationsPerRun)
                 {
-                    total += await ProcessMovies(_maxTranslationsPerRun - total.New);
+                    movieStats = await ProcessMovies(_maxTranslationsPerRun - total.New);
+                    total += movieStats;
                 }
 
                 break;
         }
 
         _logger.LogInformation(
-            "Automation run complete: {New} new translations, {Scanned}/{Total} scanned, {Skipped} skipped " +
-            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}).",
+            "Automation run complete: {New} new translations, {Scanned}/{Total} scanned " +
+            "({MovieItems} movies + {EpisodeItems} episodes), {Skipped} skipped " +
+            "(no subtitles: {NoSubs}, no source language: {NoSource}, unknown language: {Unknown}, already up to date: {UpToDate}, too recent: {TooRecent}), " +
+            "{Excluded} excluded by the IncludeInTranslation flag (not part of the scanned/total figures).",
             total.New,
             total.Scanned,
             total.Total,
+            movieStats.Total,
+            showStats.Total,
             total.NoSubtitles + total.NoSource + total.Unknown + total.UpToDate + total.TooRecent,
-            total.NoSubtitles, total.NoSource, total.Unknown, total.UpToDate, total.TooRecent);
+            total.NoSubtitles, total.NoSource, total.Unknown, total.UpToDate, total.TooRecent,
+            total.Excluded);
 
         await _scheduleService.UpdateJobState(jobName, JobStatus.Succeeded.GetDisplayName());
     }
@@ -185,12 +231,6 @@ public class AutomatedTranslationJob
             .OrderBy(movie => movie.Id)
             .ToListAsync();
 
-        if (!movies.Any())
-        {
-            _logger.LogInformation("No translatable movies found.");
-            return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
-        }
-
         // ponytail: flag-off rows explain "missing" items (scanned < library size).
         var excludedMovies = await _dbContext.Movies.CountAsync(movie => !movie.IncludeInTranslation);
         if (excludedMovies > 0)
@@ -199,7 +239,13 @@ public class AutomatedTranslationJob
                 "{Count} movies excluded by the IncludeInTranslation flag.",
                 excludedMovies);
         }
-        
+
+        if (!movies.Any())
+        {
+            _logger.LogInformation("No translatable movies found.");
+            return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0, excludedMovies);
+        }
+
         // Instead of a random selection based on updatedAt, we will use a cycle so that all shows are processed.
         // Hopefully, this will prevent some shows from not being processed at all.
         var currentIndex = GetProcessingIndex(MovieProcessingIndexKey);
@@ -299,7 +345,8 @@ public class AutomatedTranslationJob
             skippedNoSource,
             skippedUnknown,
             skippedUpToDate,
-            skippedTooRecent);
+            skippedTooRecent,
+            excludedMovies);
     }
 
     private async Task<AutomationPassStats> ProcessShows(int limit)
@@ -320,21 +367,22 @@ public class AutomatedTranslationJob
             .OrderBy(e => e.Id)
             .ToListAsync();
 
-        if (!episodes.Any())
-        {
-            _logger.LogInformation("No translatable shows found.");
-            return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0);
-        }
-
         // ponytail: flag-off rows explain "missing" items (scanned < library size).
         var excludedShows = await _dbContext.Shows.CountAsync(show => !show.IncludeInTranslation);
         var excludedSeasons = await _dbContext.Seasons.CountAsync(season => !season.IncludeInTranslation);
         var excludedEpisodes = await _dbContext.Episodes.CountAsync(episode => !episode.IncludeInTranslation);
-        if (excludedShows + excludedSeasons + excludedEpisodes > 0)
+        var excludedCount = excludedShows + excludedSeasons + excludedEpisodes;
+        if (excludedCount > 0)
         {
             _logger.LogInformation(
                 "Excluded by the IncludeInTranslation flag: {Shows} shows, {Seasons} seasons, {Episodes} episodes.",
                 excludedShows, excludedSeasons, excludedEpisodes);
+        }
+
+        if (!episodes.Any())
+        {
+            _logger.LogInformation("No translatable shows found.");
+            return new AutomationPassStats(0, 0, 0, 0, 0, 0, 0, 0, excludedCount);
         }
 
         // Instead of a random selection based on updatedAt, we will use a cycle so that all shows are processed.
@@ -440,7 +488,8 @@ public class AutomatedTranslationJob
             skippedNoSource,
             skippedUnknown,
             skippedUpToDate,
-            skippedTooRecent);
+            skippedTooRecent,
+            excludedCount);
     }
 
     private int GetProcessingIndex(string key)
