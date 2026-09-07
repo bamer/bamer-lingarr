@@ -31,6 +31,7 @@ public class AutomatedTranslationJob
     private int _maxTranslationsPerRun = 10;
     private TimeSpan _defaultMovieAgeThreshold;
     private TimeSpan _defaultShowAgeThreshold;
+    private int _staleRequestHours = 12;
 
     private const string MovieProcessingIndexKey = "Automation:MovieProcessingIndex";
     private const string ShowProcessingIndexKey = "Automation:ShowProcessingIndex";
@@ -144,10 +145,22 @@ public class AutomatedTranslationJob
         int.TryParse(settings[SettingKeys.Automation.MaxTranslationsPerRun], out int maxTranslations);
         int.TryParse(settings[SettingKeys.Automation.MovieAgeThreshold], out int movieAgeThreshold);
         int.TryParse(settings[SettingKeys.Automation.ShowAgeThreshold], out int showAgeThreshold);
+        int.TryParse(
+            (await _settingService.GetSetting(SettingKeys.Automation.StaleRequestHours))
+                ?? "12",
+            out int staleRequestHours);
 
         _maxTranslationsPerRun = maxTranslations;
         _defaultMovieAgeThreshold = TimeSpan.FromHours(movieAgeThreshold);
         _defaultShowAgeThreshold = TimeSpan.FromHours(showAgeThreshold);
+        _staleRequestHours = staleRequestHours <= 0 ? 12 : staleRequestHours;
+
+        // ponytail: a request stuck in Pending/InProgress permanently blocks its
+        // target language (the processor trusts that state). Stale ones — created
+        // long ago, whose Hangfire job is gone (crash, manual purge, lost worker)
+        // — are released as Interrupted so their targets can be re-queued. This is
+        // what silently ate candidates like a missing Thai translation for Harlock.
+        await ReconcileStaleRequests();
 
         var translationCycle = settings[SettingKeys.Automation.TranslationCycle] == "true" ? "movies" : "shows";
         _logger.LogInformation($"Starting translation cycle for |Green|{translationCycle}|/Green|");
@@ -695,6 +708,93 @@ public class AutomatedTranslationJob
                     show.Title);
             }
         }
+    }
+
+    /// <summary>
+    /// Releases translation requests that are stuck in Pending/InProgress beyond the
+    /// staleness threshold. Their Hangfire job is gone (crash, manual purge, lost
+    /// worker), so they will never complete on their own, yet they block their
+    /// target language forever (the processor trusts Pending/InProgress). They are
+    /// marked Interrupted and their job deleted so the normal pass re-queues the
+    /// target with a fresh request.
+    /// </summary>
+    /// <returns>The number of requests released.</returns>
+    private async Task<int> ReconcileStaleRequests()
+    {
+        if (_staleRequestHours <= 0)
+        {
+            return 0;
+        }
+
+        var cutoff = DateTime.UtcNow.AddHours(-_staleRequestHours);
+        var stale = await _dbContext.TranslationRequests
+            .Where(translationRequest =>
+                (translationRequest.Status == TranslationStatus.Pending
+                 || translationRequest.Status == TranslationStatus.InProgress)
+                && translationRequest.CreatedAt < cutoff)
+            .Select(translationRequest => new
+            {
+                translationRequest.Id,
+                translationRequest.JobId,
+                translationRequest.Title,
+                translationRequest.TargetLanguage
+            })
+            .ToListAsync();
+
+        if (stale.Count == 0)
+        {
+            return 0;
+        }
+
+        var freed = 0;
+        foreach (var request in stale)
+        {
+            if (!string.IsNullOrEmpty(request.JobId))
+            {
+                try
+                {
+                    // Remove the orphaned Hangfire job so it cannot resurrect
+                    // and translate on top of a fresh request.
+                    BackgroundJob.Delete(request.JobId);
+                }
+                catch (Exception)
+                {
+                    // Job already gone — that is expected after a crash.
+                }
+            }
+
+            try
+            {
+                var entity = await _dbContext.TranslationRequests.FindAsync(request.Id);
+                if (entity == null || entity.Status != TranslationStatus.Pending &&
+                    entity.Status != TranslationStatus.InProgress)
+                {
+                    continue;
+                }
+
+                entity.Status = TranslationStatus.Interrupted;
+                entity.CompletedAt = DateTime.UtcNow;
+                entity.ErrorMessage =
+                    $"Reconciled on {DateTime.UtcNow:yyyy-MM-dd HH:mm}: stuck for over {_staleRequestHours}h, released so the target can be re-queued.";
+                await _dbContext.SaveChangesAsync();
+                freed++;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to release stale request {RequestId} ({Title} -> {Language}).",
+                    request.Id, request.Title, request.TargetLanguage);
+            }
+        }
+
+        if (freed > 0)
+        {
+            _logger.LogWarning(
+                "{Count} stuck translation request(s) older than {Hours}h were released (marked interrupted); matching targets will be re-queued this run.",
+                freed, _staleRequestHours);
+        }
+
+        return freed;
     }
 
     private int GetProcessingIndex(string key)

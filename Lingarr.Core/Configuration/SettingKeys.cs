@@ -128,6 +128,7 @@ public static class SettingKeys
         public const string ShowSchedule = "show_schedule";
         public const string MovieAgeThreshold = "movie_age_threshold";
         public const string ShowAgeThreshold = "show_age_threshold";
+        public const string StaleRequestHours = "automation_stale_request_hours";
     }
 
     public static class SubtitleValidation

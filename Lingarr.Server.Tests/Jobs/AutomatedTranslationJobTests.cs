@@ -128,6 +128,84 @@ public class AutomatedTranslationJobTests
         return result.New > 0;
     }
 
+    [Fact]
+    public async Task ReconcileStaleRequests_ReleasesStuckPendingRequest()
+    {
+        var dbContext = BuildContext();
+        await using var context = dbContext;
+
+        var job = CreateJob(context, new RecordingMediaSubtitleProcessor());
+        // Consider requests older than 1h as stale.
+        SetPrivateField(job, "_staleRequestHours", 1);
+
+        // A request stuck in Pending for 2 hours, tied to a target language.
+        // The sync SaveChanges() bypasses the timestamp interceptor that forces
+        // CreatedAt = now, so the pre-set old CreatedAt is actually persisted.
+        var stuckRequest = new TranslationRequest
+        {
+            MediaId = 99,
+            Title = "Harlock",
+            SourceLanguage = "en",
+            TargetLanguage = "th",
+            SubtitleToTranslate = "/movies/test/test.movie.en.srt",
+            MediaType = MediaType.Movie,
+            Status = TranslationStatus.Pending,
+            CreatedAt = DateTime.UtcNow.AddHours(-2),
+            JobId = "orphaned-job"
+        };
+        context.TranslationRequests.Add(stuckRequest);
+        context.SaveChanges();
+
+        var released = await InvokeReconcileStaleRequestsAsync(job);
+
+        Assert.Equal(1, released);
+        var request = (await context.TranslationRequests.ToListAsync()).Single();
+        Assert.Equal(TranslationStatus.Interrupted, request.Status);
+    }
+
+    [Fact]
+    public async Task ReconcileStaleRequests_LeavesRecentPendingRequestAlone()
+    {
+        var dbContext = BuildContext();
+        await using var context = dbContext;
+
+        var job = CreateJob(context, new RecordingMediaSubtitleProcessor());
+        SetPrivateField(job, "_staleRequestHours", 1);
+
+        // A request created 5 minutes ago is not stale.
+        context.TranslationRequests.Add(new TranslationRequest
+        {
+            MediaId = 99,
+            Title = "Harlock",
+            SourceLanguage = "en",
+            TargetLanguage = "th",
+            SubtitleToTranslate = "/movies/test/test.movie.en.srt",
+            MediaType = MediaType.Movie,
+            Status = TranslationStatus.Pending,
+            CreatedAt = DateTime.UtcNow.AddMinutes(-5)
+        });
+        await context.SaveChangesAsync();
+
+        var released = await InvokeReconcileStaleRequestsAsync(job);
+
+        Assert.Equal(0, released);
+        var request = (await context.TranslationRequests.ToListAsync()).Single();
+        Assert.Equal(TranslationStatus.Pending, request.Status);
+    }
+
+    private static async Task<int> InvokeReconcileStaleRequestsAsync(AutomatedTranslationJob job)
+    {
+        var method = typeof(AutomatedTranslationJob)
+            .GetMethod("ReconcileStaleRequests", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (method == null)
+        {
+            throw new InvalidOperationException("ReconcileStaleRequests method not found via reflection.");
+        }
+
+        var resultTask = (Task<int>)method.Invoke(job, new object[] {})!;
+        return await resultTask.ConfigureAwait(false);
+    }
+
     private static void SetPrivateField<T>(AutomatedTranslationJob job, string fieldName, T value)
     {
         var field = typeof(AutomatedTranslationJob)

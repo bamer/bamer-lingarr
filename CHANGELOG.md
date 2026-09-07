@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.24.3] - 2026-09-07
+
+### Fixed
+- **No more candidates / automation "stops for no reason"** — A `TranslationRequest` stuck in `Pending`/`InProgress` (its Hangfire job lost to a crash, manual purge or a dead worker) blocked its target language **forever**: the processor trusts that state, so the target was never re-queued even though the subtitle file was still missing (e.g. *Space Pirate Captain Harlock* — `en`/`fr` present, Thai never queued because an orphaned `th` request sat `Pending`). The automation now **reconciles stale requests at the start of every run**: any `Pending`/`InProgress` request older than a threshold (default 12 h, key `automation_stale_request_hours`) is marked `Interrupted` and its orphaned Hangfire job deleted, so the normal pass re-queues the target with a fresh request. Released requests are counted and logged; a media whose target is blocked by a live request is still reported (`th: InProgress`).
+
 ## [2.24.2] - 2026-09-07
 
 ### Fixed
