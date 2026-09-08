@@ -64,7 +64,6 @@ public class SubtitleNamingRepairJobTests
     [InlineData("Movie.th.srt")]
     [InlineData("Movie.th.hi.srt")]         // standard HI
     [InlineData("Movie.fr.hi.srt")]         // standard HI (any language)
-    [InlineData("Movie (2020).1.th.srt")]   // multi-part counter
     [InlineData("Movie.lingarr.th.hi.srt")] // new format: tag before language
     [InlineData("It (2017).th.hi.srt")]     // title word "It" untouched
     public void Normalize_AlreadyStandard_ReturnsNull(string input)
@@ -95,5 +94,27 @@ public class SubtitleNamingRepairJobTests
         // Non-standard caption-before-language variants (sdh/cc/forced).
         Assert.Equal("Movie.fr.sdh.srt", Normalize("Movie.sdh.fr.srt"));
         Assert.Equal("Movie.fr.cc.srt", Normalize("Movie.cc.fr.srt"));
+    }
+
+    [Fact]
+    public void Normalize_SpuriousNumericCounter_Dropped()
+    {
+        // Older repair job inserted bare counters: "Movie.1.th.srt" → "Movie.th.srt"
+        Assert.Equal("Movie (2020).th.srt", Normalize("Movie (2020).1.th.srt"));
+        Assert.Equal("Movie.fr.srt", Normalize("Movie.2.fr.srt"));
+        Assert.Equal("Movie.th.hi.srt", Normalize("Movie.1.th.hi.srt"));
+    }
+
+    [Fact]
+    public void StandardNameWithCounter_InsertsCounterBeforeLanguage()
+    {
+        var isLanguage = new LanguageCodeService().Validate;
+
+        Assert.Equal(
+            "Movie.2.en.hi.srt",
+            SubtitleNamingRepairJob.StandardNameWithCounter("Movie.hi.en.srt", 2, isLanguage));
+        Assert.Equal(
+            "Movie.lingarr.2.fr.sdh.srt",
+            SubtitleNamingRepairJob.StandardNameWithCounter("Movie.sdh.fr.lingarr.srt", 2, isLanguage, "lingarr"));
     }
 }
