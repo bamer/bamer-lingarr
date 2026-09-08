@@ -22,7 +22,7 @@ namespace Lingarr.Server.Tests.Services;
 /// </summary>
 public class SubtitleLanguageDetectorTests
 {
-    private static string WriteUntaggedSrt(string directory)
+    private static string WriteUntaggedSrt(string directory, string fileName = "Some.Movie.2023")
     {
         var builder = new StringBuilder();
         for (var i = 1; i <= 12; i++)
@@ -33,7 +33,7 @@ public class SubtitleLanguageDetectorTests
             builder.AppendLine();
         }
 
-        var path = Path.Combine(directory, "Some.Movie.2023.srt");
+        var path = Path.Combine(directory, $"{fileName}.srt");
         File.WriteAllText(path, builder.ToString());
         return path;
     }
@@ -83,6 +83,58 @@ public class SubtitleLanguageDetectorTests
         var subtitles = new List<Subtitles>
         {
             new() { Path = path, FileName = "Some.Movie.2023", Language = "", Caption = "", Format = ".srt" }
+        };
+
+        var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+
+        Assert.True(renamed);
+        Assert.False(File.Exists(path));
+        Assert.True(File.Exists(Path.Combine(tempDirectory.Path, "Some.Movie.2023.fr.srt")));
+    }
+
+    [Fact]
+    public async Task DetectAndRename_UntaggedCaptionedFile_RenamesToStandardLanguageCaptionOrder()
+    {
+        // Movie.hi.srt (untagged caption) detected as French must become the
+        // media-server standard "Movie.fr.hi.srt" — caption AFTER the language.
+        using var tempDirectory = new TempDirectory();
+        var path = WriteUntaggedSrt(tempDirectory.Path, "Some.Movie.2023.hi");
+
+        var translationMock = new Mock<ITranslationService>();
+        translationMock
+            .Setup(s => s.DetectLanguageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fr");
+
+        var detector = CreateDetector(translationMock.Object);
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = path, FileName = "Some.Movie.2023.hi", Language = "", Caption = "hi", Format = ".srt" }
+        };
+
+        var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);
+
+        Assert.True(renamed);
+        Assert.False(File.Exists(path));
+        Assert.True(File.Exists(Path.Combine(tempDirectory.Path, "Some.Movie.2023.fr.hi.srt")));
+    }
+
+    [Fact]
+    public async Task DetectAndRename_UntaggedFileWithSyncedSuffix_DropsSyncedInStandardName()
+    {
+        // VLC-style ".synced" suffix is dropped: Some.Movie.2023.synced.srt
+        // detected as French → "Some.Movie.2023.fr.srt".
+        using var tempDirectory = new TempDirectory();
+        var path = WriteUntaggedSrt(tempDirectory.Path, "Some.Movie.2023.synced");
+
+        var translationMock = new Mock<ITranslationService>();
+        translationMock
+            .Setup(s => s.DetectLanguageAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fr");
+
+        var detector = CreateDetector(translationMock.Object);
+        var subtitles = new List<Subtitles>
+        {
+            new() { Path = path, FileName = "Some.Movie.2023.synced", Language = "", Caption = "", Format = ".srt" }
         };
 
         var renamed = await detector.DetectAndRenameUnknownSubtitlesAsync(subtitles);

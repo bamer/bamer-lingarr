@@ -21,6 +21,14 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
     private const int SampleLineCount = 10;
     private const int MaxSampleChars = 1200;
 
+    /// <summary>Caption tags recognized by Lingarr's filename parser.</summary>
+    private static readonly HashSet<string> Captions = new(StringComparer.OrdinalIgnoreCase)
+        { "sdh", "cc", "forced", "hi" };
+
+    /// <summary>Junk suffixes to drop (VLC-style sync copies add ".synced").</summary>
+    private static readonly HashSet<string> DropTokens = new(StringComparer.OrdinalIgnoreCase)
+        { "synced", "sync" };
+
     // ponytail: AI failure memo — a file whose language could not be identified
     // used to be re-sent to the AI on every automation pass. Keyed by
     // path+size+mtime, so an edited file is a new version and gets retried.
@@ -137,7 +145,7 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
                 var directory = Path.GetDirectoryName(subtitle.Path) ?? string.Empty;
                 var baseName = Path.GetFileNameWithoutExtension(subtitle.Path);
                 var extension = Path.GetExtension(subtitle.Path);
-                var newPath = Path.Combine(directory, $"{baseName}.{code}{extension}");
+                var newPath = Path.Combine(directory, BuildCorrectedName(baseName, code, extension));
 
                 if (File.Exists(newPath))
                 {
@@ -161,7 +169,7 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
                     string suffixedPath;
                     do
                     {
-                        suffixedPath = Path.Combine(directory, $"{baseName}.{counter}.{code}{extension}");
+                        suffixedPath = Path.Combine(directory, BuildCorrectedName(baseName, code, extension, counter));
                         counter++;
                     } while (File.Exists(suffixedPath));
 
@@ -190,6 +198,50 @@ public partial class SubtitleLanguageDetector : ISubtitleLanguageDetector
 
     private static bool IsUntagged(Subtitles subtitle) =>
         string.IsNullOrEmpty(subtitle.Language) || subtitle.Language == "unknown";
+
+    /// <summary>
+    /// Builds the media-server standard name for a detected file:
+    /// "stem.{code}.srt" or "stem.{code}.{caption}.srt" (caption AFTER the
+    /// language, per Plex/Jellyfin/Emby). Trailing junk ("synced") is dropped;
+    /// a collision counter is inserted before the language so the trailing
+    /// segments stay parseable.
+    /// </summary>
+    private static string BuildCorrectedName(string baseName, string code, string extension, int? counter = null)
+    {
+        var tokens = baseName.Split('.');
+        var captions = new List<string>();
+        var idx = tokens.Length - 1;
+        while (idx >= 0)
+        {
+            var token = tokens[idx];
+            if (Captions.Contains(token))
+            {
+                captions.Add(token); // collected in reverse order
+                idx--;
+                continue;
+            }
+            if (DropTokens.Contains(token))
+            {
+                idx--; // drop junk (synced/sync)
+                continue;
+            }
+            break;
+        }
+
+        var parts = new List<string>();
+        var stemEnd = idx + 1;
+        parts.Add(string.Join('.', tokens[..stemEnd]));
+        if (counter != null)
+        {
+            parts.Add(counter.ToString());
+        }
+        parts.Add(code);
+        foreach (var caption in captions.AsEnumerable().Reverse().ToList())
+        {
+            parts.Add(caption);
+        }
+        return string.Join('.', parts) + extension;
+    }
 
     private static string FailureKey(Subtitles subtitle)
     {

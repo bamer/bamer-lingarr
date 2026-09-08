@@ -170,20 +170,13 @@ public class SubtitleService : ISubtitleService
         var baseParts = reversedParts.AsEnumerable().Reverse().ToList();
         var newParts = new List<string>(baseParts);
 
-        // Caption and optional tag go BEFORE the language so the language is the
-        // FINAL segment: media servers (Jellyfin/Emby/Plex) identify an external
-        // subtitle by the last filename token — "movie.th.hi.srt" was reported by
-        // Jellyfin as Hindi while Lingarr's own trailing-tag parser read it back
-        // as th+hi, making the automation believe the target was satisfied
-        // (1187 files shipped as ".th.hi.srt" and invisible as Thai). The parser
-        // accepts both orders ("movie.forced.en.srt" and "movie.en.forced.srt").
-        // Add caption if present
-        if (!string.IsNullOrEmpty(caption))
-        {
-            newParts.Add(caption);
-        }
-
-        // Add tag if provided
+        // Media servers (Plex/Jellyfin/Emby) expect the language to PRECEDE the
+        // caption: "Inception.2010.fr.hi.srt" for HI/SDH, "Inception.2010.fr.srt"
+        // otherwise — the language is the token right after the base name, and
+        // caption modifiers (hi/sdh/cc/forced) follow it. The optional custom
+        // tag goes BEFORE the language so the standard tail is preserved; it is
+        // never appended after the caption where media servers would stop
+        // recognizing the file.
         if (!string.IsNullOrEmpty(subtitleTag))
         {
             newParts.Add(subtitleTag.ToLowerInvariant());
@@ -192,6 +185,12 @@ public class SubtitleService : ISubtitleService
         if (targetLanguageCode != null)
         {
             newParts.Add(targetLanguageCode.ToLowerInvariant());
+        }
+
+        // Add caption if present
+        if (!string.IsNullOrEmpty(caption))
+        {
+            newParts.Add(caption);
         }
 
         // Build new file name and path

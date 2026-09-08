@@ -4,10 +4,10 @@ using Xunit;
 namespace Lingarr.Server.Tests.Services;
 
 /// <summary>
-/// Tests for output file naming. The TARGET LANGUAGE must always be the final
-/// filename segment: Jellyfin/Emby identify an external subtitle by the last
-/// token, so "movie.th.hi.srt" showed up as Hindi while the Thai track the user
-/// asked for looked "missing". Caption and optional tag go before the language.
+/// Tests for output file naming. Media servers (Plex/Jellyfin/Emby) expect the
+/// LANGUAGE to precede the caption: "Inception.2010.fr.srt" (regular),
+/// "Inception.2010.fr.hi.srt" (HI/SDH). The optional custom tag goes before the
+/// language so the standard tail is preserved.
 /// </summary>
 public class SubtitleServiceCreateFilePathTests
 {
@@ -24,25 +24,25 @@ public class SubtitleServiceCreateFilePathTests
     }
 
     [Fact]
-    public void CreateFilePath_CaptionedSource_PutsCaptionBeforeLanguage()
+    public void CreateFilePath_CaptionedSource_KeepsStandardLanguageBeforeCaption()
     {
-        // Regression: used to produce ".th.hi.srt" (language no longer last),
-        // which Jellyfin reported as Hindi instead of Thai.
+        // Regression (2.27.0): ".hi.th.srt" broke Jellyfin — the standard is
+        // "Movie.th.hi.srt" (language first, then the caption modifier).
         var result = _service.CreateFilePath("/movies/m/Movie (2020).hi.srt", "th", "");
 
-        Assert.Equal("/movies/m/Movie (2020).hi.th.srt", result);
+        Assert.Equal("/movies/m/Movie (2020).th.hi.srt", result);
     }
 
     [Fact]
-    public void CreateFilePath_CaptionedSourceWithTag_KeepsLanguageLast()
+    public void CreateFilePath_CaptionedSourceWithTag_PutsTagBeforeLanguage()
     {
         var result = _service.CreateFilePath("/movies/m/Movie (2020).hi.srt", "th", "AI");
 
-        Assert.Equal("/movies/m/Movie (2020).hi.ai.th.srt", result);
+        Assert.Equal("/movies/m/Movie (2020).ai.th.hi.srt", result);
     }
 
     [Fact]
-    public void CreateFilePath_PlainSourceWithTag_KeepsLanguageLast()
+    public void CreateFilePath_PlainSourceWithTag_PutsTagBeforeLanguage()
     {
         var result = _service.CreateFilePath("/movies/m/Movie (2020).en.srt", "th", "AI");
 
@@ -50,7 +50,7 @@ public class SubtitleServiceCreateFilePathTests
     }
 
     [Fact]
-    public void CreateFilePath_CounterSuffix_PreservesItAndKeepsLanguageLast()
+    public void CreateFilePath_CounterSuffix_PreservesItAndKeepsLanguageBeforeCaption()
     {
         var result = _service.CreateFilePath("/movies/m/Movie (2020).1.en.srt", "th", "");
 
@@ -58,11 +58,11 @@ public class SubtitleServiceCreateFilePathTests
     }
 
     [Fact]
-    public void CreateFilePath_ForcedCaption_MovesCaptionBeforeLanguage()
+    public void CreateFilePath_ForcedCaption_KeepsStandardLanguageBeforeCaption()
     {
         var result = _service.CreateFilePath("/movies/m/Movie (2020).forced.en.srt", "fr", "");
 
-        Assert.Equal("/movies/m/Movie (2020).forced.fr.srt", result);
+        Assert.Equal("/movies/m/Movie (2020).fr.forced.srt", result);
     }
 
     [Fact]

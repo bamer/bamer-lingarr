@@ -1,4 +1,5 @@
 using Hangfire;
+using Lingarr.Core.Configuration;
 using Lingarr.Core.Data;
 using Lingarr.Core.Enum;
 using Lingarr.Server.Filters;
@@ -11,14 +12,15 @@ namespace Lingarr.Server.Jobs;
 
 /// <summary>
 /// One-shot maintenance, launched on demand from the Schedule page.
-/// Normalizes translated subtitle file names so the LANGUAGE is always the
-/// final filename segment: Jellyfin/Emby identify an external subtitle by the
-/// last token, so files written by older versions as "Movie.th.hi.srt" showed
-/// up as Hindi (or were ignored) while Lingarr's own trailing-tag parser read
-/// them back as th+hi — the Thai track looked missing although the file
-/// existed. Renames to "Movie.hi.th.srt" and updates the paths recorded on
-/// translation requests so nothing gets re-translated. Also covers junk
-/// suffixes such as VLC's ".synced" (Movie.th.synced.srt → Movie.synced.th.srt).
+/// Normalizes translated subtitle file names to the Plex/Jellyfin/Emby
+/// standard: language first, optional caption after —
+/// "Inception.2010.fr.srt" (regular), "Inception.2010.fr.hi.srt" (HI/SDH).
+/// Repairs legacy variants: the inverted order shipped by 2.27.0
+/// ("Movie.hi.th.srt" → "Movie.th.hi.srt"), VLC-style junk suffixes
+/// ("Movie.th.synced.srt" → "Movie.th.srt", "synced" is dropped), and moves
+/// an old trailing custom tag before the language ("Movie.th.hi.lingarr.srt"
+/// → "Movie.lingarr.th.hi.srt"). Renamed paths are re-pointed on translation
+/// requests so nothing gets re-translated.
 /// </summary>
 public class SubtitleNamingRepairJob
 {
@@ -26,20 +28,27 @@ public class SubtitleNamingRepairJob
     private static readonly HashSet<string> Captions = new(StringComparer.OrdinalIgnoreCase)
         { "sdh", "cc", "forced", "hi" };
 
+    /// <summary>Junk suffixes to drop (VLC-style sync copies add ".synced").</summary>
+    private static readonly HashSet<string> DropTokens = new(StringComparer.OrdinalIgnoreCase)
+        { "synced", "sync" };
+
     private readonly LingarrDbContext _dbContext;
     private readonly ILogger<SubtitleNamingRepairJob> _logger;
     private readonly IScheduleService _scheduleService;
     private readonly LanguageCodeService _languageCodeService;
+    private readonly ISettingService _settingService;
 
     public SubtitleNamingRepairJob(
         LingarrDbContext dbContext,
         IScheduleService scheduleService,
         LanguageCodeService languageCodeService,
+        ISettingService settingService,
         ILogger<SubtitleNamingRepairJob> logger)
     {
         _dbContext = dbContext;
         _scheduleService = scheduleService;
         _languageCodeService = languageCodeService;
+        _settingService = settingService;
         _logger = logger;
     }
 
@@ -49,6 +58,11 @@ public class SubtitleNamingRepairJob
     {
         var jobName = JobContextFilter.GetCurrentJobTypeName();
         await _scheduleService.UpdateJobState(jobName, JobStatus.Processing.GetDisplayName());
+
+        // The custom subtitle tag (opt-in, default "lingarr") has been written
+        // after the caption by older versions (Movie.th.hi.lingarr.srt). We move
+        // it before the language — knowing its exact value lets us recognize it.
+        var tag = await GetConfiguredTag();
 
         var directories = await _dbContext.Movies
             .Where(m => m.Path != null)
@@ -89,7 +103,7 @@ public class SubtitleNamingRepairJob
             {
                 scanned++;
                 var fileName = Path.GetFileName(file);
-                var normalized = NormalizeFileName(fileName, _languageCodeService.Validate);
+                var normalized = NormalizeFileName(fileName, _languageCodeService.Validate, tag);
                 if (normalized == null)
                 {
                     continue;
@@ -175,62 +189,107 @@ public class SubtitleNamingRepairJob
     }
 
     /// <summary>
-    /// Pure normalization rule, mirroring Lingarr's trailing-tag parser
-    /// (basename[.lang][.caption], max two meaningful trailing tokens, plus one
-    /// junk suffix such as ".synced"). Returns the normalized file name, or null
-    /// when the name already ends with the language tag (or carries none).
+    /// Pure normalization rule. Classifies the trailing filename tokens
+    /// (language, caption, junk to drop, optional custom tag) and re-emits them
+    /// in the media-server standard order: optional tag, then language, then
+    /// caption(s) — "Movie.lingarr.th.hi.srt". Junk tokens ("synced"/"sync")
+    /// are dropped. Returns null when the name already matches the standard
+    /// (or carries no language tag).
     /// </summary>
-    /// <param name="fileName">File name with extension, e.g. "Movie.th.hi.srt".</param>
+    /// <param name="fileName">File name with extension, e.g. "Movie.hi.th.srt".</param>
     /// <param name="isLanguage">Language-token probe (injected for testability).</param>
-    public static string? NormalizeFileName(string fileName, Func<string, bool> isLanguage)
+    /// <param name="tag">Configured custom subtitle tag, or null when tagging is off.</param>
+    public static string? NormalizeFileName(string fileName, Func<string, bool> isLanguage, string? tag = null)
     {
         if (!fileName.EndsWith(".srt", StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
 
-        var stem = fileName[..^4];
-        var tokens = stem.Split('.');
+        var tokens = fileName[..^4].Split('.');
         if (tokens.Length < 2)
         {
             return null;
         }
 
-        var last = tokens[^1];
-        string[] reordered;
+        // Walk backwards while the token is one of our trailing tags.
+        // "hi" is BOTH a caption tag and the ISO code for Hindi — the parser
+        // treats it as a caption first (a lone ".hi" is ambiguous), so the
+        // language check never applies to caption tokens.
+        bool IsCaption(string token) => Captions.Contains(token);
+        bool IsLanguageToken(string token) => isLanguage(token) && !IsCaption(token);
 
-        if (Captions.Contains(last))
+        var trailing = new List<string>();
+        var idx = tokens.Length - 1;
+        while (idx >= 0)
         {
-            // "X.th.hi.srt": caption last, language one before → swap them.
-            if (tokens.Length < 3 || !isLanguage(tokens[^2]))
+            var token = tokens[idx];
+            if (IsCaption(token)
+                || IsLanguageToken(token)
+                || DropTokens.Contains(token)
+                || (tag != null && string.Equals(token, tag, StringComparison.OrdinalIgnoreCase)))
             {
-                return null; // caption-only file without a language tag
+                trailing.Add(token); // collected in reverse order
+                idx--;
+                continue;
+            }
+            break;
+        }
+
+        var hadLanguage = trailing.Any(IsLanguageToken);
+        if (!hadLanguage)
+        {
+            return null; // no language tag → leave the file alone
+        }
+
+        var original = trailing.AsEnumerable().Reverse().ToList(); // original tail order
+        var tagFound = tag != null && original.Any(token => string.Equals(token, tag, StringComparison.OrdinalIgnoreCase));
+        var language = original.Last(IsLanguageToken);
+
+        // Standard order: [tag?] [language] [caption...] — junk is dropped.
+        var canonical = new List<string>();
+        if (tagFound)
+        {
+            canonical.Add(tag!);
+        }
+        canonical.Add(language);
+        foreach (var token in original)
+        {
+            if (Captions.Contains(token))
+            {
+                canonical.Add(token);
+            }
+        }
+
+        var stemEnd = idx + 1;
+        var newParts = new List<string>();
+        for (var i = 0; i < stemEnd; i++)
+        {
+            newParts.Add(tokens[i]);
+        }
+        foreach (var part in canonical)
+        {
+            newParts.Add(part);
+        }
+        var newName = string.Join('.', newParts) + ".srt";
+        return string.Equals(newName, fileName, StringComparison.Ordinal) ? null : newName;
+    }
+
+    private async Task<string?> GetConfiguredTag()
+    {
+        try
+        {
+            if (await _settingService.GetSetting(SettingKeys.Translation.UseSubtitleTagging) != "true")
+            {
+                return null;
             }
 
-            reordered = [.. tokens[..^2], tokens[^1], tokens[^2]];
+            var tag = await _settingService.GetSetting(SettingKeys.Translation.SubtitleTag);
+            return string.IsNullOrWhiteSpace(tag) ? null : tag.Trim();
         }
-        else if (isLanguage(last))
-        {
-            return null; // language already last
-        }
-        else if (isLanguage(tokens[^2]) && !Captions.Contains(tokens[^2]))
-        {
-            // "X.th.synced.srt": junk suffix after the language → move it before.
-            reordered = [.. tokens[..^2], tokens[^1], tokens[^2]];
-        }
-        else if (tokens.Length >= 3
-                 && Captions.Contains(tokens[^2])
-                 && isLanguage(tokens[^3]))
-        {
-            // "X.th.hi.synced.srt": junk after caption+language → caption, junk, language.
-            reordered = [.. tokens[..^3], tokens[^2], tokens[^1], tokens[^3]];
-        }
-        else
+        catch (Exception)
         {
             return null;
         }
-
-        var newName = string.Join('.', reordered) + ".srt";
-        return string.Equals(newName, fileName, StringComparison.Ordinal) ? null : newName;
     }
 }

@@ -39,6 +39,27 @@ public class SubtitleServiceLanguageTests
     }
 
     [Fact]
+    public async Task GetAllSubtitles_StandardMediaNaming_DetectsLanguageAndCaption()
+    {
+        // Plex/Jellyfin standard: language then caption — "Inception.2010.fr.hi.srt".
+        using var tempDirectory = new TempDirectory();
+        var detected = await DetectAsync(CreateService(), tempDirectory.Path,
+            "Inception.2010.REPACK.fr.srt",
+            "Inception.2010.REPACK.fr.hi.srt",
+            "Inception.2010.REPACK.fr.sdh.srt",
+            "Movie.lingarr.fr.hi.srt",
+            "Movie (2020).1.th.srt");
+
+        Assert.Equal(("fr", ""), detected["Inception.2010.REPACK.fr.srt"]);
+        Assert.Equal(("fr", "hi"), detected["Inception.2010.REPACK.fr.hi.srt"]);
+        Assert.Equal(("fr", "sdh"), detected["Inception.2010.REPACK.fr.sdh.srt"]);
+        // Custom tag before the language is ignored by the parser.
+        Assert.Equal(("fr", "hi"), detected["Movie.lingarr.fr.hi.srt"]);
+        // Multi-part counter suffix keeps the trailing language parseable.
+        Assert.Equal(("th", ""), detected["Movie (2020).1.th.srt"]);
+    }
+
+    [Fact]
     public async Task GetAllSubtitles_UntaggedTitleContainingLanguageCode_ReturnsEmptyLanguage()
     {
         using var tempDirectory = new TempDirectory();

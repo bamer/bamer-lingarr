@@ -1,9 +1,18 @@
 # Changelog
 
+## [2.28.0] - 2026-09-08
+
+### Fixed
+- **Half the subtitles vanished from Plex/Jellyfin after the 2.27 rename** — 2.27.0 wrongly assumed media servers identify an external subtitle by the *last* filename token and rewrote outputs as `Movie.hi.th.srt`. Plex/Jellyfin actually expect the standard **`Inception.2010.fr.srt`** (regular) / **`Inception.2010.fr.hi.srt`** (HI/SDH) — language **before** caption. Restored:
+  - `SubtitleService.CreateFilePath` writes the standard order again (`Movie.th.hi.srt`), with the optional custom tag placed *before* the language (`Movie.lingarr.th.hi.srt`);
+  - `SubtitleNamingRepairJob` now converts files **to** the standard: inverted order from 2.27.0 (`Movie.hi.th.srt` → `Movie.th.hi.srt`), VLC junk suffixes **dropped** (`Movie.th.synced.srt` → `Movie.th.srt`, `Movie.th.hi.synced.srt` → `Movie.th.hi.srt`), and an old trailing tag moved before the language (`Movie.th.hi.lingarr.srt` → `Movie.lingarr.th.hi.srt`). Standard names are recognized as-is and left untouched (the ambiguity of `hi` = Hindi **or** Hearing-Impaired is resolved as caption-first, matching the parser);
+  - `SubtitleLanguageDetector` renames detected files to the standard too: `Movie.hi.srt` detected as French → **`Movie.fr.hi.srt`** (caption after language), `Movie.synced.srt` → `Movie.fr.srt` (junk dropped).
+  - Pure rule `NormalizeFileName` is unit-tested (14 cases); ~20 new/updated tests overall.
+
 ## [2.27.0] - 2026-09-08
 
 ### Added
-- **`SubtitleNamingRepairJob` (manual, Schedule page)** — one-shot maintenance that normalizes legacy translated subtitle names so the language is the final filename segment. Covers caption-after-language files (`Movie.th.hi.srt` → `Movie.hi.th.srt`), VLC's `.synced` suffix (`Movie.th.synced.srt` → `Movie.synced.th.srt`), and combined cases, across movie and episode directories (including Synology `@eaDir` copies). Paths on `translation_requests` are re-pointed so nothing is re-translated. Pure decision rule (`NormalizeFileName`) is unit-tested; the job runs on demand from the Schedule page via the generic "Run" button.
+- **`SubtitleNamingRepairJob` (manual, Schedule page)** — one-shot maintenance that normalizes translated subtitle file names to the Plex/Jellyfin standard (`Movie.fr.srt`, `Movie.fr.hi.srt`): seconds the 2.28.0 behavior above. Runs on demand from the Schedule page via the generic "Run" button; renamed paths are re-pointed on `translation_requests` so nothing is re-translated.
 
 ## [2.26.0] - 2026-09-08
 
