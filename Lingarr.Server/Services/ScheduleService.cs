@@ -102,6 +102,12 @@ public class ScheduleService : IScheduleService
             Cron.Never(),
             new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
 
+        RecurringJob.AddOrUpdate<SubtitleNamingRepairJob>(
+            "SubtitleNamingRepairJob",
+            job => job.Execute(),
+            Cron.Never(),
+            new RecurringJobOptions { TimeZone = TimeZoneInfo.Utc });
+
         _logger.LogInformation("Cleaning up orphaned processing jobs.");
         var monitor = JobStorage.Current.GetMonitoringApi();
         var processingJobs = monitor.ProcessingJobs(0, int.MaxValue);

@@ -17,6 +17,7 @@ using Lingarr.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit;
 
 namespace Lingarr.Server.Tests.Jobs;
@@ -92,7 +93,8 @@ public class AutomatedTranslationJobTests
 
     private static AutomatedTranslationJob CreateJob(
         LingarrDbContext context,
-        IMediaSubtitleProcessor processor)
+        IMediaSubtitleProcessor processor,
+        Moq.Mock<Lingarr.Server.Interfaces.Services.IHangfireJobInspector>? jobInspector = null)
     {
         return new AutomatedTranslationJob(
             context,
@@ -104,7 +106,8 @@ public class AutomatedTranslationJobTests
             new Moq.Mock<IRadarrService>().Object,
             new Moq.Mock<ISonarrService>().Object,
             new Moq.Mock<IMovieSyncService>().Object,
-            new Moq.Mock<IShowSyncService>().Object);
+            new Moq.Mock<IShowSyncService>().Object,
+            (jobInspector ?? new Moq.Mock<Lingarr.Server.Interfaces.Services.IHangfireJobInspector>()).Object);
     }
 
     private static void ConfigureJobForMovies(AutomatedTranslationJob job)
@@ -191,6 +194,83 @@ public class AutomatedTranslationJobTests
         Assert.Equal(0, released);
         var request = (await context.TranslationRequests.ToListAsync()).Single();
         Assert.Equal(TranslationStatus.Pending, request.Status);
+    }
+
+    [Fact]
+    public async Task ReconcileStaleRequests_KeepsRequestWhoseJobIsStillQueued()
+    {
+        var dbContext = BuildContext();
+        await using var context = dbContext;
+
+        // Regression: with a backlog deeper than the staleness threshold, releasing
+        // a request whose Hangfire job is alive deletes a queued job and re-queues
+        // the same work — an endless churn that blocks the target forever.
+        var jobInspector = new Moq.Mock<Lingarr.Server.Interfaces.Services.IHangfireJobInspector>();
+        jobInspector
+            .Setup(inspector => inspector.GetJobState(It.IsAny<string>()))
+            .Returns("Enqueued");
+
+        var job = CreateJob(context, new RecordingMediaSubtitleProcessor(), jobInspector);
+        SetPrivateField(job, "_staleRequestHours", 1);
+
+        var queuedRequest = new TranslationRequest
+        {
+            MediaId = 99,
+            Title = "Airplane II",
+            SourceLanguage = "en",
+            TargetLanguage = "th",
+            SubtitleToTranslate = "/movies/test/test.movie.en.srt",
+            MediaType = MediaType.Movie,
+            Status = TranslationStatus.Pending,
+            CreatedAt = DateTime.UtcNow.AddHours(-2),
+            JobId = "still-queued-job"
+        };
+        context.TranslationRequests.Add(queuedRequest);
+        context.SaveChanges();
+
+        var released = await InvokeReconcileStaleRequestsAsync(job);
+
+        Assert.Equal(0, released);
+        var request = (await context.TranslationRequests.ToListAsync()).Single();
+        Assert.Equal(TranslationStatus.Pending, request.Status);
+        jobInspector.Verify(inspector => inspector.GetJobState("still-queued-job"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReconcileStaleRequests_ReleasesStaleRequestWhoseJobFailed()
+    {
+        var dbContext = BuildContext();
+        await using var context = dbContext;
+
+        // Failed jobs never retry (AutomaticRetry(0) on TranslationJob) — the
+        // request would block its target forever, so it must be released.
+        var jobInspector = new Moq.Mock<Lingarr.Server.Interfaces.Services.IHangfireJobInspector>();
+        jobInspector
+            .Setup(inspector => inspector.GetJobState(It.IsAny<string>()))
+            .Returns("Failed");
+
+        var job = CreateJob(context, new RecordingMediaSubtitleProcessor(), jobInspector);
+        SetPrivateField(job, "_staleRequestHours", 1);
+
+        context.TranslationRequests.Add(new TranslationRequest
+        {
+            MediaId = 99,
+            Title = "Airplane II",
+            SourceLanguage = "en",
+            TargetLanguage = "th",
+            SubtitleToTranslate = "/movies/test/test.movie.en.srt",
+            MediaType = MediaType.Movie,
+            Status = TranslationStatus.InProgress,
+            CreatedAt = DateTime.UtcNow.AddHours(-2),
+            JobId = "failed-job"
+        });
+        context.SaveChanges();
+
+        var released = await InvokeReconcileStaleRequestsAsync(job);
+
+        Assert.Equal(1, released);
+        var request = (await context.TranslationRequests.ToListAsync()).Single();
+        Assert.Equal(TranslationStatus.Interrupted, request.Status);
     }
 
     private static async Task<int> InvokeReconcileStaleRequestsAsync(AutomatedTranslationJob job)

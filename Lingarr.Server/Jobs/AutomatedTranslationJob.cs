@@ -11,6 +11,7 @@ using Lingarr.Server.Interfaces.Services.Integration;
 using Lingarr.Server.Interfaces.Services.Sync;
 using Lingarr.Server.Models;
 using Lingarr.Server.Models.Integrations;
+using Lingarr.Server.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.OpenApi.Extensions;
@@ -29,6 +30,7 @@ public class AutomatedTranslationJob
     private readonly ISonarrService _sonarrService;
     private readonly IMovieSyncService _movieSyncService;
     private readonly IShowSyncService _showSyncService;
+    private readonly IHangfireJobInspector _jobInspector;
     private int _maxTranslationsPerRun = 10;
     private TimeSpan _defaultMovieAgeThreshold;
     private TimeSpan _defaultShowAgeThreshold;
@@ -52,7 +54,8 @@ public class AutomatedTranslationJob
         IRadarrService radarrService,
         ISonarrService sonarrService,
         IMovieSyncService movieSyncService,
-        IShowSyncService showSyncService)
+        IShowSyncService showSyncService,
+        IHangfireJobInspector jobInspector)
     {
         _dbContext = dbContext;
         _logger = logger;
@@ -64,6 +67,7 @@ public class AutomatedTranslationJob
         _sonarrService = sonarrService;
         _movieSyncService = movieSyncService;
         _showSyncService = showSyncService;
+        _jobInspector = jobInspector;
     }
 
     // ponytail: local gate instead of [DisableConcurrentExecution] — single-instance
@@ -74,7 +78,7 @@ public class AutomatedTranslationJob
     private const string AutomationRunStartedKey = "Automation:RunStartedAt";
 
     [AutomaticRetry(Attempts = 0)]
-    [Queue("translation")]
+    [Queue("system")]
     public async Task Execute()
     {
         if (!await AutomationGate.WaitAsync(TimeSpan.Zero))
@@ -713,11 +717,16 @@ public class AutomatedTranslationJob
 
     /// <summary>
     /// Releases translation requests that are stuck in Pending/InProgress beyond the
-    /// staleness threshold. Their Hangfire job is gone (crash, manual purge, lost
-    /// worker), so they will never complete on their own, yet they block their
-    /// target language forever (the processor trusts Pending/InProgress). They are
-    /// marked Interrupted and their job deleted so the normal pass re-queues the
-    /// target with a fresh request.
+    /// staleness threshold AND whose Hangfire job can no longer run (gone, Failed,
+    /// Deleted, Expired, or Succeeded with the status not advanced). They would
+    /// never complete on their own, yet they block their target language forever
+    /// (the processor trusts Pending/InProgress). They are marked Interrupted and
+    /// their job deleted so the normal pass re-queues the target with a fresh
+    /// request.
+    /// A request whose job is still Enqueued/Scheduled/Processing is left alone:
+    /// with a backlog deeper than the threshold (hundreds of items, slow service),
+    /// releasing it would delete a live job and create an endless churn that
+    /// permanently blocks the target while the queue never drains.
     /// </summary>
     /// <returns>The number of requests released.</returns>
     private async Task<int> ReconcileStaleRequests()
@@ -738,7 +747,8 @@ public class AutomatedTranslationJob
                 translationRequest.Id,
                 translationRequest.JobId,
                 translationRequest.Title,
-                translationRequest.TargetLanguage
+                translationRequest.TargetLanguage,
+                translationRequest.CreatedAt
             })
             .ToListAsync();
 
@@ -748,8 +758,18 @@ public class AutomatedTranslationJob
         }
 
         var freed = 0;
+        var keptAlive = 0;
         foreach (var request in stale)
         {
+            var jobState = string.IsNullOrEmpty(request.JobId)
+                ? null
+                : _jobInspector.GetJobState(request.JobId);
+            if (!StaleRequestPolicy.IsReleasable(request.CreatedAt, DateTime.UtcNow, _staleRequestHours, jobState))
+            {
+                keptAlive++;
+                continue;
+            }
+
             if (!string.IsNullOrEmpty(request.JobId))
             {
                 try
@@ -776,7 +796,7 @@ public class AutomatedTranslationJob
                 entity.Status = TranslationStatus.Interrupted;
                 entity.CompletedAt = DateTime.UtcNow;
                 entity.ErrorMessage =
-                    $"Reconciled on {DateTime.UtcNow:yyyy-MM-dd HH:mm}: stuck for over {_staleRequestHours}h, released so the target can be re-queued.";
+                    $"Reconciled on {DateTime.UtcNow:yyyy-MM-dd HH:mm}: stuck for over {_staleRequestHours}h with job state '{jobState ?? "gone"}', released so the target can be re-queued.";
                 await _dbContext.SaveChangesAsync();
                 freed++;
             }
@@ -786,6 +806,13 @@ public class AutomatedTranslationJob
                     "Failed to release stale request {RequestId} ({Title} -> {Language}).",
                     request.Id, request.Title, request.TargetLanguage);
             }
+        }
+
+        if (keptAlive > 0)
+        {
+            _logger.LogInformation(
+                "{Count} stale-looking request(s) older than {Hours}h kept: their Hangfire job is still queued or running (backlog deeper than the threshold) — they will complete on their own.",
+                keptAlive, _staleRequestHours);
         }
 
         if (freed > 0)

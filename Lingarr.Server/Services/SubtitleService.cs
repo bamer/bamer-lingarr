@@ -169,24 +169,31 @@ public class SubtitleService : ISubtitleService
         // Reconstruct base parts
         var baseParts = reversedParts.AsEnumerable().Reverse().ToList();
         var newParts = new List<string>(baseParts);
-        
-        if (targetLanguageCode != null)
-        {
-            newParts.Add(targetLanguageCode.ToLowerInvariant());
-        }
 
+        // Caption and optional tag go BEFORE the language so the language is the
+        // FINAL segment: media servers (Jellyfin/Emby/Plex) identify an external
+        // subtitle by the last filename token — "movie.th.hi.srt" was reported by
+        // Jellyfin as Hindi while Lingarr's own trailing-tag parser read it back
+        // as th+hi, making the automation believe the target was satisfied
+        // (1187 files shipped as ".th.hi.srt" and invisible as Thai). The parser
+        // accepts both orders ("movie.forced.en.srt" and "movie.en.forced.srt").
         // Add caption if present
         if (!string.IsNullOrEmpty(caption))
         {
             newParts.Add(caption);
         }
-        
+
         // Add tag if provided
         if (!string.IsNullOrEmpty(subtitleTag))
         {
             newParts.Add(subtitleTag.ToLowerInvariant());
         }
-        
+
+        if (targetLanguageCode != null)
+        {
+            newParts.Add(targetLanguageCode.ToLowerInvariant());
+        }
+
         // Build new file name and path
         var newFileName = string.Join(".", newParts) + extension;
         var directory = Path.GetDirectoryName(originalPath) ?? string.Empty;

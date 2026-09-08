@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.27.0] - 2026-09-08
+
+### Added
+- **`SubtitleNamingRepairJob` (manual, Schedule page)** — one-shot maintenance that normalizes legacy translated subtitle names so the language is the final filename segment. Covers caption-after-language files (`Movie.th.hi.srt` → `Movie.hi.th.srt`), VLC's `.synced` suffix (`Movie.th.synced.srt` → `Movie.synced.th.srt`), and combined cases, across movie and episode directories (including Synology `@eaDir` copies). Paths on `translation_requests` are re-pointed so nothing is re-translated. Pure decision rule (`NormalizeFileName`) is unit-tested; the job runs on demand from the Schedule page via the generic "Run" button.
+
+## [2.26.0] - 2026-09-08
+
+### Fixed
+- **Thai (and other) tracks invisible in Jellyfin despite being translated** — Output files were named `<base>.<lang>.<caption>.srt` (e.g. `Movie.th.hi.srt`, 1187 files on one instance): media servers identify an external subtitle by the LAST filename token, so Jellyfin reported those as Hindi (or ignored them) while Lingarr's own trailing-tag parser read them back correctly as `th` — the automation then (correctly, but confusingly) reported the media "already up to date". `CreateFilePath` now emits caption/tag BEFORE the language (`Movie.hi.th.srt`), so the language is always the final segment; the parser already accepts both orders. Existing files can be repaired from the Schedule page with the new `SubtitleNamingRepairJob`.
+- **Missing translations reported as "already up to date" (e.g. en/fr sources, Thai never queued)** — `ReconcileStaleRequests` released *any* request older than the staleness threshold (12 h), even when its Hangfire job was still alive and simply waiting in the queue. With a backlog deeper than the threshold (600+ items on a single worker) this deleted live jobs, marked them `Interrupted`, re-queued them, and killed them again 12 h later — an endless churn that kept every target permanently "blocked" while the queue never drained. The reconcile now inspects the Hangfire job state first: a request is only released when its job is proven dead (gone, `Failed`, `Deleted`, `Expired`, or `Succeeded` without the status advancing); queued/scheduled/running requests are kept and logged. Decision rules extracted into the pure, unit-tested `StaleRequestPolicy`.
+
+### Changed
+- **Translations no longer block the rest of the system** — Hangfire now runs two server pools: `lingarr-translations` (queue `translation` only, `TRANSLATION_WORKER_COUNT` workers, default 2) and `lingarr-system` (automation pass, syncs, webhooks, cleanup — `MAX_CONCURRENT_JOBS` workers, default 2). Previously one worker served every queue, so a single long translation delayed the automation pass, syncs and webhooks for its whole duration. The automation job itself moved from the `translation` queue to `system` so it can never queue behind hours of translations.
+
+### Added
+- **`TRANSLATION_WORKER_COUNT` environment variable** — parallel subtitle translations (default 2). Raise it to drain a large backlog faster; the practical ceiling is your translation service's rate limit.
+
 ## [2.25.0] - 2026-09-08
 
 ### Fixed

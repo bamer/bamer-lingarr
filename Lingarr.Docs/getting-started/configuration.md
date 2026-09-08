@@ -8,7 +8,8 @@ Lingarr is primarily configured through its web interface. However, every settin
 |--------------------------|-----------------|
 | `ASPNETCORE_URLS=http://+:9876` | The internal port that Lingarr will listen on inside the container. |
 | `BASE_PATH` | Optional URL prefix to host Lingarr under a sub-path (e.g., behind a reverse proxy). Example: `/lingarr`. Leave unset to serve from the root. |
-| `MAX_CONCURRENT_JOBS=1` | Sets the amount of jobs that can run concurrently, defaults to 1. |
+| `MAX_CONCURRENT_JOBS=2` | Amount of system jobs (automation pass, syncs, webhooks, cleanup) that can run concurrently, defaults to 2. |
+| `TRANSLATION_WORKER_COUNT=2` | Amount of subtitle translations that can run in parallel, defaults to 2. Raise it to drain a large backlog faster — the practical ceiling is your translation service's rate limit (DeepL API plan, AI provider concurrency, etc.). |
 
 ## Database
 

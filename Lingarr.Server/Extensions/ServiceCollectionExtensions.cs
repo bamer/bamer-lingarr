@@ -180,6 +180,7 @@ public static class ServiceCollectionExtensions
         // Register translate services
         builder.Services.AddScoped<ITranslationServiceFactory, TranslationFactory>();
         builder.Services.AddSingleton<LanguageCodeService>();
+        builder.Services.AddSingleton<IHangfireJobInspector, HangfireJobInspector>();
         builder.Services.AddSingleton<IRequestTemplateService, RequestTemplateService>();
 
         // Register manifests
@@ -240,13 +241,33 @@ public static class ServiceCollectionExtensions
     private static void ConfigureHangfire(this WebApplicationBuilder builder)
     {
         var tablePrefix = "_hangfire";
+
+        // Two server pools so translations never starve system work (and vice
+        // versa): with a single pool and one worker, one long translation blocked
+        // the automation pass, syncs and webhooks for its whole duration.
+        // - TRANSLATION_WORKER_COUNT: parallel subtitle translations (AI/DeepL
+        //   rate limits are the practical ceiling).
+        // - MAX_CONCURRENT_JOBS: automation pass, syncs, webhooks, cleanup, etc.
         builder.Services.AddHangfireServer(options =>
         {
-            options.Queues = ["movies", "shows", "system", "translation", "webhook", "default"];
+            options.ServerName = "lingarr-translations";
+            options.Queues = ["translation"];
+            options.WorkerCount =
+                int.TryParse(Environment.GetEnvironmentVariable("TRANSLATION_WORKER_COUNT"), out var translationWorkers)
+                && translationWorkers > 0
+                    ? translationWorkers
+                    : 2;
+        });
+
+        builder.Services.AddHangfireServer(options =>
+        {
+            options.ServerName = "lingarr-system";
+            options.Queues = ["movies", "shows", "system", "webhook", "default"];
             options.WorkerCount =
                 int.TryParse(Environment.GetEnvironmentVariable("MAX_CONCURRENT_JOBS"), out var maxConcurrentJobs)
+                && maxConcurrentJobs > 0
                     ? maxConcurrentJobs
-                    : 1;
+                    : 2;
         });
 
         builder.Services.AddHangfire(configuration =>
