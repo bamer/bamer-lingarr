@@ -9,7 +9,7 @@
   - `SubtitleLanguageDetector` renames detected files to the standard too: `Movie.hi.srt` detected as French → **`Movie.fr.hi.srt`** (caption after language), `Movie.synced.srt` → `Movie.fr.srt` (junk dropped).
   - Pure rule `NormalizeFileName` is unit-tested (14 cases); ~20 new/updated tests overall.
 
-## [2.27.0] - 2026-09-08
+## [2.28.0] - 2026-09-08
 
 ### Added
 - **`SubtitleNamingRepairJob` (manual, Schedule page)** — one-shot maintenance that normalizes translated subtitle file names to the Plex/Jellyfin standard (`Movie.fr.srt`, `Movie.fr.hi.srt`): seconds the 2.28.0 behavior above. Runs on demand from the Schedule page via the generic "Run" button; renamed paths are re-pointed on `translation_requests` so nothing is re-translated.
